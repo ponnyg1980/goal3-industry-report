@@ -1,0 +1,13 @@
+# NEVER commit secrets
+.streamlit/secrets.toml
+secrets.env
+*.key
+
+# local sample outputs
+SAMPLE_report_*.html
+out/
+
+# python
+__pycache__/
+*.pyc
+.venv/
