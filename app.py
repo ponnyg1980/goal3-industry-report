@@ -24,12 +24,18 @@ st.caption("MOAT for Braudit · Goal #3 — company + sector trademark intellige
 
 # ── connection status ────────────────────────────────────────────────
 c1, c2, c3 = st.columns(3)
-c1.success("Temmy API: connected") if (da.api_ready() and da.health()) \
-    else c1.error("Temmy API: not reachable")
-c2.success("Query Runs: live") if da.query_runs_ready() \
-    else c2.warning("Query Runs: pending key")
-c3.success("Companies House: live") if ch.ready() \
-    else c3.warning("Companies House: no key (registry-only lookups)")
+if da.api_ready() and da.health():
+    c1.success("Temmy API: connected")
+else:
+    c1.error("Temmy API: not reachable")
+if da.query_runs_ready():
+    c2.success("Query Runs: live")
+else:
+    c2.warning("Query Runs: pending key")
+if ch.ready():
+    c3.success("Companies House: live")
+else:
+    c3.warning("Companies House: no key (registry-only lookups)")
 st.divider()
 
 # ── input ────────────────────────────────────────────────────────────
