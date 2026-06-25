@@ -33,7 +33,41 @@ def _esc(x) -> str:
     return html.escape(str(x if x is not None else "—"))
 
 
-def render(*, company_name, applicant, marks, sector_company=None, sector=None) -> str:
+def _benchmark_block(benchmark) -> str:
+    if not benchmark:
+        return ""
+    m = benchmark.get("metrics", {})
+    means = benchmark.get("means", {})
+    pen = m.get("penetration_pct", {})
+    tpa = m.get("trademarks_per_applicant", {})
+    yr = m.get("years_to_first_filing", {})
+    frac = means.get("frac_trademark_post_incorporation")
+    rows = [
+        ("Trademark penetration (%)", pen.get("mean"), pen.get("industry"), "—"),
+        ("Trademarks (per applicant)", tpa.get("mean"), tpa.get("industry"), tpa.get("company")),
+        ("Years to first filing", yr.get("mean"), yr.get("industry"), yr.get("company")),
+    ]
+    body = "".join(
+        f"<tr><td>{_esc(a)}</td><td class='num'>{_esc(b)}</td>"
+        f"<td class='num'>{_esc(c)}</td><td class='num'>{_esc(d)}</td></tr>"
+        for a, b, c, d in rows)
+    note = ""
+    if frac:
+        note = (f"<p class='muted'>{round(frac*100)}% of companies file their first "
+                f"trademark after incorporating; the typical company files "
+                f"{_esc(means.get('mean_years_to_first_filing'))} years into its journey.</p>")
+    return f"""
+        <h2>How they compare</h2>
+        <p class="muted">All-industry mean vs their industry (union of SIC codes) vs this company.</p>
+        {note}
+        <table><thead><tr><th>Metric</th><th class="num">All-industry mean</th>
+          <th class="num">Their industry</th><th class="num">This company</th></tr></thead>
+          <tbody>{body}</tbody></table>
+    """
+
+
+def render(*, company_name, applicant, marks, sector_company=None, sector=None,
+           benchmark=None) -> str:
     logo = _logo_data_uri()
     today = dt.date.today().strftime("%d %B %Y")
 
@@ -118,7 +152,11 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None) 
 
   {sector_block}
 
-  <div class="foot">The Trademark Helpline · Source: UK IPO registry (TemmyDB).
+  {_benchmark_block(benchmark)}
+
+  <div class="foot">Counts include all trademarks ever filed (live and lapsed), for this
+     legal entity only — group subsidiaries with separate company numbers are not aggregated.<br>
+     The Trademark Helpline · Source: UK IPO registry (TemmyDB).
      Figures reflect companies matched to Companies House SIC codes. This report
      is informational and not legal advice.</div>
 </body></html>"""

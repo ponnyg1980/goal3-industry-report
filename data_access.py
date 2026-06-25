@@ -18,6 +18,7 @@ Credentials are read from ../temmy-access/secrets.env (never from chat).
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -25,6 +26,7 @@ import urllib.request
 
 from config import get_secret
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_BASE = "https://temmy-api-prod-zfxujusd3q-nw.a.run.app"
 
 BASE = get_secret("TEMMY_API_BASE_URL", DEFAULT_BASE)
@@ -110,9 +112,12 @@ def query_runs_ready() -> bool:
     return s == 200
 
 
-def run_sql(sql: str, *, max_rows: int = 5000):
+def run_sql(sql: str, *, max_pages: int = 20):
     """Execute one read-only SELECT via Query Runs; return list[dict].
-    Rows arrive inline in 'preview'; we page only if there are more."""
+
+    NOTE: the POST response's `preview` is only a ~25-row sample. The full
+    result set must be read from /pages/{n} (keyed as `items`), 1000 rows/page.
+    """
     if not QR_KEY:
         raise QueryRunsUnavailable("No TEMMY_QUERY_RUNS_API_KEY set.")
     s, payload = _request("POST", "/api/v2/query-runs",
@@ -122,22 +127,25 @@ def run_sql(sql: str, *, max_rows: int = 5000):
         raise QueryRunsUnavailable("Query Runs key rejected (401).")
     if s >= 400 or not isinstance(payload, dict):
         raise RuntimeError(f"Query Runs error {s}: {payload}")
-    rows = list(payload.get("preview") or [])
-    pag = payload.get("pagination") or {}
     run_id = payload.get("query_id")
-    total = pag.get("total", len(rows))
-    page = 2
-    while run_id and len(rows) < min(total, max_rows) and page <= (pag.get("total_pages") or 1):
+    total_pages = (payload.get("pagination") or {}).get("total_pages", 1) or 1
+    rows = []
+    for page in range(1, min(total_pages, max_pages) + 1):
         s2, pg = _request("GET", f"/api/v2/query-runs/{run_id}/pages/{page}",
                           key_header="X-Query-Runs-Key", key_value=QR_KEY)
         if s2 != 200 or not isinstance(pg, dict):
             break
-        more = pg.get("preview") or pg.get("items") or pg.get("rows") or []
+        more = pg.get("items") or pg.get("preview") or pg.get("rows") or []
         if not more:
             break
         rows.extend(more)
-        page += 1
     return rows
+
+
+def run_scalar(sql: str) -> dict:
+    """Convenience: return the first row of a Query Run as a dict (or {})."""
+    rows = run_sql(sql)
+    return rows[0] if rows else {}
 
 
 def _safe_sic(sic: str) -> str:
@@ -193,6 +201,153 @@ def applicant_sic(ipo_identifier):
         "FROM applicants a JOIN companies c ON c.id = a.company_id "
         f"WHERE a.ipo_identifier = {iid} LIMIT 1")
     return rows[0] if rows else None
+
+
+# ── Benchmarking engine (industry vs overall MEAN vs the company) ────
+import csv as _csv
+
+_ASSETS = os.path.join(HERE, "assets")
+_REF = {}
+
+
+def _ref():
+    """Lazy-load bundled reference data (per-SIC company totals, per-SIC
+    trademark counts, and the precomputed all-industry MEANs)."""
+    if _REF:
+        return _REF
+    try:
+        _REF["means"] = json.load(open(os.path.join(_ASSETS, "benchmark_means.json")))
+    except Exception:
+        _REF["means"] = {}
+    try:
+        _REF["tm"] = json.load(open(os.path.join(_ASSETS, "sic_tm_counts.json")))
+    except Exception:
+        _REF["tm"] = {}
+    totals = {}
+    try:
+        for r in _csv.DictReader(open(os.path.join(_ASSETS, "sic_company_totals.csv"))):
+            totals[r["sic"]] = {"total": int(r["total_companies"] or 0),
+                                "active": int(r["active_companies"] or 0)}
+    except Exception:
+        pass
+    _REF["totals"] = totals
+    return _REF
+
+
+def _sic_pred(sics, col="c.sic_codes"):
+    """Build a (sic1=ANY(col) OR sic2=ANY(col) ...) predicate — the Query Runs
+    engine rejects the && array-overlap operator, but ANY works."""
+    parts = [f"'{_safe_sic(s)}'=ANY({col})" for s in sics]
+    return "(" + " OR ".join(parts) + ")"
+
+
+def sic_penetration(sics):
+    """Per-SIC penetration = trademark-holding companies / all companies (CH).
+    Returns list of {sic, trademarking, total_companies, penetration_pct}."""
+    ref = _ref()
+    out = []
+    for s in sics:
+        s = _safe_sic(s)
+        tm = ref["tm"].get(s, {})
+        tot = ref["totals"].get(s, {})
+        cos = tm.get("cos", 0)
+        total = tot.get("total", 0)
+        out.append({"sic": s, "trademarking": cos, "total_companies": total,
+                    "penetration_pct": round(cos / total * 100, 2) if total else None})
+    return out
+
+
+def industry_benchmark(sics) -> dict:
+    """Live metrics for the company's industry = union of its SIC codes."""
+    pred = _sic_pred(sics)
+    join = (f"FROM companies c JOIN applicants a ON a.company_id=c.id "
+            f"JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
+            f"WHERE {pred}")
+    size = run_scalar(f"SELECT count(distinct at.trademark_id) tms, "
+                      f"count(distinct c.id) companies, count(distinct a.id) applicants {join}")
+    per_appl = run_scalar(f"SELECT count(distinct at.trademark_id)::float/"
+                          f"nullif(count(distinct a.id),0) v {join}")
+    journey = run_scalar(
+        f"SELECT avg(days)::float avg_days, count(*) n, "
+        f"count(*) FILTER (WHERE days>=0)::float/nullif(count(*),0) frac_post "
+        f"FROM (SELECT c.id, (min(t.application_date_time)::date - c.incorporation_date) days "
+        f"      FROM companies c JOIN applicants a ON a.company_id=c.id "
+        f"      JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
+        f"      JOIN trademarks t ON t.id=at.trademark_id "
+        f"      WHERE {pred} AND c.incorporation_date IS NOT NULL "
+        f"      GROUP BY c.id, c.incorporation_date) s")
+    pens = [p["penetration_pct"] for p in sic_penetration(sics) if p["penetration_pct"] is not None]
+    return {
+        "trademarks": size.get("tms", 0),
+        "companies_trademarking": size.get("companies", 0),
+        "applicants": size.get("applicants", 0),
+        "trademarks_per_applicant": round(per_appl.get("v") or 0, 2),
+        "penetration_pct": round(sum(pens) / len(pens), 2) if pens else None,
+        "avg_years_to_first_filing": round((journey.get("avg_days") or 0) / 365.25, 2),
+        "frac_post_incorporation": round(journey.get("frac_post") or 0, 3),
+    }
+
+
+def company_benchmark(company_number: str) -> dict:
+    """The selected company's own position: its trademark count and its own
+    years from incorporation to first filing."""
+    n = re.sub(r"[^0-9A-Za-z]", "", str(company_number))
+    row = run_scalar(
+        "SELECT c.name, c.number, "
+        "count(distinct at.trademark_id) tms, "
+        "(min(t.application_date_time)::date - c.incorporation_date) days_to_first "
+        "FROM companies c JOIN applicants a ON a.company_id=c.id "
+        "JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
+        "JOIN trademarks t ON t.id=at.trademark_id "
+        f"WHERE c.number='{n}' GROUP BY c.name, c.number, c.incorporation_date")
+    days = row.get("days_to_first")
+    return {
+        "name": row.get("name"),
+        "trademarks": row.get("tms", 0),
+        "years_to_first_filing": round(days / 365.25, 2) if isinstance(days, (int, float)) else None,
+    }
+
+
+def benchmark(company_number: str, sics) -> dict:
+    """Assemble the three reference points (overall MEAN, industry, company)
+    for each metric, with an ahead/behind verdict."""
+    means = _ref()["means"]
+    ind = industry_benchmark(sics)
+    co = company_benchmark(company_number)
+
+    def verdict(value, ref, higher_is_more=True):
+        if value is None or ref in (None, 0):
+            return None
+        return "above" if value >= ref else "below"
+
+    return {
+        "industry": ind,
+        "company": co,
+        "means": means,
+        "metrics": {
+            "penetration_pct": {
+                "mean": means.get("mean_penetration_pct"),
+                "industry": ind["penetration_pct"],
+                "company": None,  # penetration is a sector property
+                "industry_vs_mean": verdict(ind["penetration_pct"], means.get("mean_penetration_pct")),
+            },
+            "trademarks_per_applicant": {
+                "mean": means.get("mean_trademarks_per_applicant"),
+                "industry": ind["trademarks_per_applicant"],
+                "company": co["trademarks"],
+                "company_vs_industry": verdict(co["trademarks"], ind["trademarks_per_applicant"]),
+                "company_vs_mean": verdict(co["trademarks"], means.get("mean_trademarks_per_applicant")),
+            },
+            "years_to_first_filing": {
+                "mean": means.get("mean_years_to_first_filing"),
+                "industry": ind["avg_years_to_first_filing"],
+                "company": co["years_to_first_filing"],
+                # earlier filing = more proactive; "below" the average years = ahead
+                "company_vs_industry": verdict(co["years_to_first_filing"], ind["avg_years_to_first_filing"]),
+                "company_vs_mean": verdict(co["years_to_first_filing"], means.get("mean_years_to_first_filing")),
+            },
+        },
+    }
 
 
 def sector_report(sic: str) -> dict:

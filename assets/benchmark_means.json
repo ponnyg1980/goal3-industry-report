@@ -1,0 +1,9 @@
+{
+  "mean_penetration_pct": 15.57,
+  "median_penetration_pct": 10.05,
+  "mean_trademarks_per_applicant": 1.9,
+  "mean_days_to_first_filing": 1380.7,
+  "mean_years_to_first_filing": 3.78,
+  "frac_trademark_post_incorporation": 0.887,
+  "penetration_basis": "trademark-holding companies / all companies in SIC (Companies House), SICs with >=20 companies"
+}
