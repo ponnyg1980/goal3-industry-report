@@ -14,12 +14,26 @@ Sector intelligence always comes from Temmy (by SIC), via Query Runs.
 """
 import streamlit as st
 
+import pandas as pd
+
 import data_access as da
 import companies_house as ch
 import branded_report as br
+import recommend as rec
 
 
 # ── cached data calls (Streamlit re-runs the whole script per click) ──
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_class_rec(sics_tuple):
+    return rec.class_recommendations(list(sics_tuple))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_term_rec(sics_tuple, cls):
+    return rec.term_recommendations(list(sics_tuple), cls)
+
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def c_search(name):
     return da.search_company(name, limit=50)
@@ -248,3 +262,96 @@ st.download_button("⬇ Export branded report (HTML)", data=report_html,
                    file_name=f"industry_report_{name.strip().replace(' ', '_')}.html",
                    mime="text/html")
 st.caption("Branded, print-to-PDF ready. Server-side PDF can be added via pdfkit.")
+
+# ── Goal #1: Class & term recommendations (editable, savable) ─────────
+_BAND_EMOJI = {"Always": "⬛ Always", "Often": "🟩 Often",
+               "Sometimes": "🟧 Sometimes", "Rarely": "🟥 Rarely"}
+
+st.divider()
+st.header("Class & term recommendations")
+st.caption("Suggested Nice classes and goods/services terms for this company's "
+           "industry, banded by how commonly each is used: "
+           "⬛ Always · 🟩 Often · 🟧 Sometimes · 🟥 Rarely. Untick anything they "
+           "don't need, then save their selection.")
+
+if not (da.query_runs_ready() and sics and sector_company):
+    st.info("Needs Query Runs and a company with SIC codes.")
+else:
+    audience = st.radio("Audience", ["Client", "Staff"], horizontal=True,
+                        help="Client = branded download only. Staff = branded + CSV.")
+    if st.button("Generate class & term recommendations"):
+        st.session_state["rec_go"] = True
+
+    if st.session_state.get("rec_go"):
+        cr = c_class_rec(tuple(sics))
+        if not cr["classes"]:
+            st.warning("No class data for this industry.")
+        else:
+            st.caption(f"Industry = SIC {', '.join(sics)} · {cr['total']:,} trademarks.")
+            cls_df = pd.DataFrame([{
+                "Keep": c["band"] != "Rarely",
+                "Band": _BAND_EMOJI[c["band"]],
+                "Class": c["class"],
+                "Heading": c["heading"],
+                "% of industry": c["pct"],
+                "Trademarks": c["trademarks"],
+            } for c in cr["classes"]])
+            edited = st.data_editor(
+                cls_df, hide_index=True, use_container_width=True, key="cls_editor",
+                column_config={"Keep": st.column_config.CheckboxColumn(required=True)},
+                disabled=["Band", "Class", "Heading", "% of industry", "Trademarks"])
+            kept_class_nums = set(edited[edited["Keep"]]["Class"].tolist())
+
+            st.subheader("Terms within kept classes")
+            st.caption("Open a class to review and untick terms.")
+            selection = []
+            for c in cr["classes"]:
+                if c["class"] not in kept_class_nums:
+                    continue
+                with st.expander(f"{_BAND_EMOJI[c['band']]} · Class {c['class']} — "
+                                 f"{c['heading']}  ({c['pct']}%)"):
+                    tr = c_term_rec(tuple(sics), c["class"])
+                    if not tr["terms"]:
+                        st.write("_No terms found._")
+                        kept_terms = []
+                    else:
+                        tdf = pd.DataFrame([{
+                            "Keep": t["band"] != "Rarely",
+                            "Band": _BAND_EMOJI[t["band"]],
+                            "Term": t["term"],
+                            "% of class": t["pct"],
+                        } for t in tr["terms"]])
+                        te = st.data_editor(
+                            tdf, hide_index=True, use_container_width=True,
+                            key=f"term_editor_{c['class']}",
+                            column_config={"Keep": st.column_config.CheckboxColumn(required=True)},
+                            disabled=["Band", "Term", "% of class"])
+                        band_of = {t["term"]: t["band"] for t in tr["terms"]}
+                        kept_terms = [{"term": x, "band": band_of.get(x, "Rarely")}
+                                      for x in te[te["Keep"]]["Term"].tolist()]
+                selection.append({"class": c["class"], "heading": c["heading"],
+                                  "band": c["band"], "pct": c["pct"], "terms": kept_terms})
+
+            # ── save ──
+            st.subheader("Save selection")
+            company_label = (sector_company or {}).get("name") or name
+            rec_html = br.render_recommendations(company_label, sics, selection)
+            fn = company_label.strip().replace(" ", "_")
+            st.download_button("⬇ Download branded recommendations (HTML)", rec_html,
+                               file_name=f"class_term_recommendations_{fn}.html",
+                               mime="text/html")
+            if audience == "Staff":
+                rows = []
+                for s in selection:
+                    if s["terms"]:
+                        for t in s["terms"]:
+                            rows.append({"Class": s["class"], "Heading": s["heading"],
+                                         "Class band": s["band"], "Term": t["term"],
+                                         "Term band": t["band"]})
+                    else:
+                        rows.append({"Class": s["class"], "Heading": s["heading"],
+                                     "Class band": s["band"], "Term": "", "Term band": ""})
+                csv = pd.DataFrame(rows).to_csv(index=False)
+                st.download_button("⬇ Download CSV (staff)", csv,
+                                   file_name=f"class_term_recommendations_{fn}.csv",
+                                   mime="text/csv")

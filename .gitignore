@@ -4,7 +4,7 @@ secrets.env
 *.key
 
 # local sample outputs
-SAMPLE_report_*.html
+SAMPLE_*.html
 out/
 
 # python

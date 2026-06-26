@@ -66,6 +66,68 @@ def _benchmark_block(benchmark) -> str:
     """
 
 
+_BAND_COLOUR = {"Always": "#1D1D1B", "Often": "#2E7D32",
+                "Sometimes": "#E69500", "Rarely": "#C0392B"}
+
+
+def render_recommendations(company_name, sics, selection) -> str:
+    """Branded, colour-coded class & term recommendation sheet (Goal #1).
+    selection = [{class, heading, band, pct, terms:[{term, band}]}]."""
+    logo = _logo_data_uri()
+    today = dt.date.today().strftime("%d %B %Y")
+    blocks = []
+    for s in selection or []:
+        ccol = _BAND_COLOUR.get(s.get("band"), "#1D1D1B")
+        terms = s.get("terms") or []
+        term_html = " ".join(
+            f"<span class='term' style='color:{_BAND_COLOUR.get(t.get('band'),'#1D1D1B')}'>"
+            f"{_esc(t.get('term'))}</span>"
+            for t in terms) or "<span class='muted'>— class kept; terms not itemised —</span>"
+        blocks.append(f"""
+          <div class="clsrow">
+            <div class="clshdr" style="color:{ccol}">
+              <span class="band" style="background:{ccol}">{_esc(s.get('band'))}</span>
+              Class {_esc(s.get('class'))} — {_esc(s.get('heading'))}
+              <span class="muted">({_esc(s.get('pct'))}% of industry)</span>
+            </div>
+            <div class="terms">{term_html}</div>
+          </div>""")
+    body = "".join(blocks) or "<p class='muted'>No classes selected.</p>"
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Class &amp; Term Recommendations — {_esc(company_name)}</title>
+<style>
+  @page {{ size: A4; margin: 16mm; }}
+  body {{ font-family:'Helvetica Neue',Arial,sans-serif; color:{BODY}; font-size:12px; }}
+  .hdr {{ display:flex; justify-content:space-between; align-items:center;
+          border-bottom:3px solid {PINK}; padding-bottom:10px; margin-bottom:16px; }}
+  .hdr img {{ height:44px; }} .hdr .meta {{ text-align:right; color:{SLATE}; font-size:11px; }}
+  h1 {{ color:{NAVY}; font-size:20px; margin:4px 0; }}
+  .legend {{ color:{SLATE}; font-size:11px; margin-bottom:14px; }}
+  .legend b {{ padding:1px 6px; border-radius:3px; color:#fff; margin-right:2px; }}
+  .clsrow {{ border:1px solid #eee; border-radius:8px; padding:10px 12px; margin-bottom:10px; }}
+  .clshdr {{ font-size:14px; font-weight:700; margin-bottom:6px; }}
+  .band {{ color:#fff; font-size:10px; padding:1px 7px; border-radius:10px; margin-right:8px;
+           vertical-align:middle; }}
+  .terms {{ line-height:1.9; }}
+  .term {{ display:inline-block; margin:0 10px 2px 0; font-size:12px; }}
+  .muted {{ color:{SLATE}; font-weight:400; font-size:11px; }}
+  .foot {{ margin-top:24px; color:{SLATE}; font-size:10px; border-top:1px solid #eee; padding-top:8px; }}
+</style></head><body>
+  <div class="hdr">
+    <div>{'<img src="'+logo+'"/>' if logo else '<strong>The Trademark Helpline</strong>'}</div>
+    <div class="meta">Class &amp; Term Recommendations<br>Generated {today}</div>
+  </div>
+  <h1>{_esc(company_name)}</h1>
+  <p class="legend">Industry: SIC {_esc(', '.join(sics or []))}. Frequency in this industry:
+     <b style="background:#1D1D1B">Always</b><b style="background:#2E7D32">Often</b>
+     <b style="background:#E69500">Sometimes</b><b style="background:#C0392B">Rarely</b></p>
+  {body}
+  <div class="foot">A starting point based on what this industry typically protects — not legal
+     advice. Final class/term selection should be confirmed for the specific goods and services.<br>
+     The Trademark Helpline · Source: UK IPO registry (TemmyDB) + Companies House.</div>
+</body></html>"""
+
+
 def render(*, company_name, applicant, marks, sector_company=None, sector=None,
            benchmark=None) -> str:
     logo = _logo_data_uri()
