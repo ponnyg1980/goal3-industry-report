@@ -102,7 +102,18 @@ _qp = st.query_params
 _link_company = (_qp.get("company") or "").strip()
 
 
+import importlib
 import nuggets as nug
+
+# Streamlit hot-reloads app.py but keeps helper modules in sys.modules, so a
+# changed nuggets.py can stay stale until the app is rebooted — that's what
+# made the loader fall back to showing ALL eight cards instead of a set of
+# four. Reloading here (the module is ~5KB, so it's free) means a deploy of
+# nuggets.py always takes effect immediately.
+try:
+    nug = importlib.reload(nug)
+except Exception:
+    pass
 
 
 def _cards(which: str, message: str) -> str:
@@ -799,9 +810,15 @@ if _stage == "input2":
 
 
 
-    st.session_state.update(
-        asmt_q1=q1_idx, asmt_q2=q2_flags, asmt_q2none=q2_none, asmt_q3=q3_idx,
-        juris_now=juris_now, juris_plan=juris_plan)
+    # Persist the answers under NON-widget keys. Streamlit raises if you
+    # assign to a key that a widget owns via key= (asmt_q1/asmt_q3/asmt_q2none
+    # are widget keys), so the report reads these mirrors instead.
+    st.session_state["ans_q1"] = q1_idx
+    st.session_state["ans_q2"] = q2_flags
+    st.session_state["ans_q2none"] = q2_none
+    st.session_state["ans_q3"] = q3_idx
+    st.session_state["ans_juris_now"] = juris_now
+    st.session_state["ans_juris_plan"] = juris_plan
 
     st.divider()
     if q1_idx is None or q3_idx is None:
@@ -1047,12 +1064,12 @@ if da.query_runs_ready() and sics and sector_company:
 
 
 # the answers they gave at input 2
-q1_idx = st.session_state.get("asmt_q1")
-q2_flags = st.session_state.get("asmt_q2", [])
-q2_none = st.session_state.get("asmt_q2none", False)
-q3_idx = st.session_state.get("asmt_q3")
-juris_now = st.session_state.get("juris_now", [])
-juris_plan = st.session_state.get("juris_plan", [])
+q1_idx = st.session_state.get("ans_q1")
+q2_flags = st.session_state.get("ans_q2", [])
+q2_none = st.session_state.get("ans_q2none", False)
+q3_idx = st.session_state.get("ans_q3")
+juris_now = st.session_state.get("ans_juris_now", [])
+juris_plan = st.session_state.get("ans_juris_plan", [])
 _n_sim = sum((risk_res or {}).get("counts", {}).values()) if risk_res else 0
 import assessment as asmt
 
