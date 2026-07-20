@@ -412,3 +412,105 @@ def sector_report(sic: str) -> dict:
     out["top_companies"] = run_sql(sql["top_companies"])
     out["class_distribution"] = run_sql(sql["class_distribution"])
     return out
+
+
+# ── Applicant-name search (the other half of "find my company") ──────
+# Companies House answers "does this company exist?". It cannot answer
+# "does it own trademarks?" — and the register holds owners that CH does
+# not: overseas companies, partnerships, individuals, and companies that
+# have since dissolved. Searching only CH therefore misses real clients.
+#
+# Two wrinkles this has to survive:
+#   1. One company appears as SEVERAL applicant records. Technical Fibre
+#      Products is "…Limited" (9 marks) and "…Ltd." (8 marks) — two rows,
+#      one company, 17 marks. Show them separately and we look wrong.
+#   2. applicants.company_number is often NULL; the CH number lives on the
+#      joined companies row instead. So we coalesce the two.
+
+_SUFFIXES = (" limited", " ltd", " plc", " llp", " lp", " inc", " incorporated",
+             " corporation", " corp", " company", " co", " gmbh", " sa", " nv",
+             " bv", " ag", " srl", " spa", " pty", " oy", " ab", " as")
+
+
+def norm_company_name(name: str) -> str:
+    """Comparable form of a company name: lowercase, no punctuation, no
+    legal suffix. 'Technical Fibre Products Ltd.' and '…PRODUCTS LIMITED'
+    both become 'technical fibre products'."""
+    s = re.sub(r"[^0-9a-z ]", " ", str(name or "").lower())
+    s = re.sub(r"\s+", " ", s).strip()
+    for _ in range(2):                      # "…Holdings Ltd Co" etc.
+        for suf in _SUFFIXES:
+            if s.endswith(suf):
+                s = s[: -len(suf)].strip()
+                break
+    return s
+
+
+def search_applicants(name: str, *, limit: int = 25):
+    """Trademark owners whose NAME matches — grouped to one row per real
+    company. Each item:
+      {name, display_name, company_number, ipo_identifiers:[...],
+       n_marks, kind, norm}
+    Ordered by portfolio size, because the biggest owner of a name is
+    almost always the one the visitor means.
+    """
+    q = _sanitise_phrase(name)
+    if len(q) < 3:
+        return []
+    rows = run_sql(
+        "SELECT a.name, a.ipo_identifier, a.kind, "
+        "COALESCE(a.company_number, c.number) AS company_number, "
+        "c.name AS ch_name, "
+        "COUNT(DISTINCT apt.trademark_id) AS n_marks "
+        "FROM applicants a "
+        "LEFT JOIN companies c ON c.id = a.company_id "
+        "LEFT JOIN applicant_trademarks apt "
+        "  ON apt.applicant_id = a.id AND apt.active "
+        f"WHERE a.name ILIKE '%{q}%' "
+        "GROUP BY a.name, a.ipo_identifier, a.kind, "
+        "         COALESCE(a.company_number, c.number), c.name "
+        f"ORDER BY n_marks DESC LIMIT {int(limit) * 4}")
+
+    grouped: dict = {}
+    for r in rows:
+        num = (r.get("company_number") or "").strip() or None
+        nrm = norm_company_name(r.get("ch_name") or r.get("name"))
+        key = num or nrm                    # CH number wins; else the name
+        g = grouped.setdefault(key, {
+            "name": r.get("ch_name") or r.get("name"),
+            "display_name": r.get("ch_name") or r.get("name"),
+            "company_number": num, "ipo_identifiers": [], "n_marks": 0,
+            "kind": r.get("kind"), "norm": nrm, "variants": []})
+        g["ipo_identifiers"].append(r.get("ipo_identifier"))
+        g["variants"].append(r.get("name"))
+        g["n_marks"] += int(r.get("n_marks") or 0)
+        if num and not g["company_number"]:
+            g["company_number"] = num
+    out = [g for g in grouped.values() if g["n_marks"] > 0]
+    out.sort(key=lambda g: -g["n_marks"])
+    return out[:int(limit)]
+
+
+def applicant_marks(ipo_identifiers, *, limit: int = 200):
+    """Every mark held by a set of applicant records (the variants of one
+    company), newest first. Used when there is no CH number to join on."""
+    ids = [int(i) for i in (ipo_identifiers or []) if i is not None]
+    if not ids:
+        return []
+    inlist = ",".join(str(i) for i in ids)
+    # NOTE: Query Runs cannot PROJECT a raw date/timestamp column — SELECT or
+    # ORDER BY on `application_date_time` / `expiry_date` returns a 500. They
+    # are fine inside a WHERE clause (which is why the corpus filter works),
+    # and fine wrapped in to_char(). So: format dates as text, and sort by
+    # application_number, which rises over time and gives the same
+    # newest-first order without touching a date column.
+    return run_sql(
+        "SELECT DISTINCT mk.verbal_element_text AS mark, t.status, "
+        "       t.application_number, "
+        "       to_char(t.expiry_date, 'DD Mon YYYY') AS expires "
+        "FROM applicants a "
+        "JOIN applicant_trademarks apt ON apt.applicant_id = a.id AND apt.active "
+        "JOIN trademarks t ON t.id = apt.trademark_id "
+        "JOIN marks mk ON mk.trademark_id = t.id "
+        f"WHERE a.ipo_identifier IN ({inlist}) "
+        f"ORDER BY t.application_number DESC LIMIT {int(limit)}")
