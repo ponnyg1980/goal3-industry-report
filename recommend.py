@@ -124,11 +124,47 @@ def class_recommendations_for_type(business_type: str) -> dict:
             'terms': rec.get('terms', [])}
 
 
+def type_sics(business_type: str) -> list[str]:
+    """The SIC codes behind a business type (public — the report uses these
+    for term lookups when the user picks a type outside the company's SIC)."""
+    return _type_sics(business_type)
+
+
 def _type_sics(business_type: str) -> list[str]:
     for _sector, types in _tx.SECTORS.items():
         if business_type in types:
             return [str(c) for c in types[business_type]]
     return []
+
+
+def candidate_types(sics) -> list[dict]:
+    """Business types that share the company's SIC(s) — the toggle options.
+
+    A SIC like 62012 covers ten different business types (SaaS, fintech,
+    cybersecurity…) that file very differently; the SIC view blends them. This
+    returns the candidates so the report can ask "which one is this company?"
+    and switch to the sweep's per-type bands. Types with sweep data first
+    (they get the confirmed cohort + characteristic terms), then the rest.
+    """
+    import json
+    if isinstance(sics, str):
+        sics = [sics]
+    wanted = {str(s).strip() for s in (sics or []) if str(s).strip()}
+    seed = _HERE / 'freesearch' / 'data' / 'type_seed.json'
+    swept = set(json.loads(seed.read_text())) if seed.exists() else set()
+    out = []
+    for sector, types in _tx.SECTORS.items():
+        for name, codes in types.items():
+            if wanted & {str(c) for c in codes}:
+                out.append({'business_type': name, 'sector': sector,
+                            'has_sweep_data': name in swept})
+    out.sort(key=lambda d: (not d['has_sweep_data'], d['business_type']))
+    return out
+
+
+def all_types() -> list[str]:
+    """Every business type in the taxonomy (for the 'something else' search)."""
+    return sorted(n for types in _tx.SECTORS.values() for n in types)
 
 
 def term_recommendations(sics, cls: int, limit: int = 25) -> dict:
@@ -155,4 +191,5 @@ def term_recommendations(sics, cls: int, limit: int = 25) -> dict:
 
 # Back-compat: some callers imported NICE_HEADINGS from here.
 __all__ = ['class_recommendations', 'class_recommendations_for_type',
-           'term_recommendations', 'NICE_HEADINGS']
+           'term_recommendations', 'candidate_types', 'all_types', 'type_sics',
+           'NICE_HEADINGS']

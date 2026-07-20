@@ -34,6 +34,16 @@ def c_term_rec(sics_tuple, cls):
     return rec.term_recommendations(list(sics_tuple), cls)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_type_rec(business_type):
+    return rec.class_recommendations_for_type(business_type)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_candidates(sics_tuple):
+    return rec.candidate_types(list(sics_tuple))
+
+
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def c_search(name):
@@ -334,9 +344,52 @@ st.caption("Suggested Nice classes and goods/services terms for your industry, "
 if not (da.query_runs_ready() and sics and sector_company):
     st.info("Sector recommendations aren't available for this company right now.")
 else:
+    # ── View toggle: whole SIC vs specific business type ──────────────
+    # A shared SIC (62012 covers SaaS, fintech, cybersecurity…) blends very
+    # different filing patterns. If the SIC maps to more than one business
+    # type, ask which one this company is and use the classification sweep's
+    # per-type bands + the characteristic terms that disambiguate the classes.
+    candidates = c_candidates(tuple(sics))
+    chosen_type = None
+    if len(candidates) > 1:
+        cand_names = [c["business_type"] for c in candidates]
+        options = [f"All of SIC {', '.join(sics)} (industry-wide)"] + cand_names \
+                  + ["Something else…"]
+        pick = st.selectbox(
+            "This company is a…", options, index=0,
+            help="This SIC covers several kinds of business that protect very "
+                 "different things. Picking one gives figures for businesses "
+                 "like this one, not the whole SIC.")
+        if pick == "Something else…":
+            chosen_type = st.selectbox("Search all business types",
+                                       rec.all_types(), index=None,
+                                       placeholder="Start typing…")
+        elif pick in cand_names:
+            chosen_type = pick
+    elif len(candidates) == 1 and candidates[0]["has_sweep_data"]:
+        # SIC maps to exactly one type — use its confirmed-cohort view
+        # silently; there is nothing to ask the user.
+        chosen_type = candidates[0]["business_type"]
+
     with st.container():
         with st.spinner("Building class & term recommendations…"):
-            cr = c_class_rec(tuple(sics))
+            if chosen_type:
+                cr = c_type_rec(chosen_type)
+            else:
+                cr = c_class_rec(tuple(sics))
+        if chosen_type and cr.get("source") == "sweep":
+            st.caption(f"Showing **{chosen_type}** — based on {cr['total']:,} "
+                       f"businesses of this type, classified from their actual "
+                       f"filings (not the whole SIC).")
+            if cr.get("terms"):
+                with st.expander("What businesses like this actually protect "
+                                 "(in their own words)"):
+                    for t in cr["terms"][:10]:
+                        st.markdown(f"- {t['text']}  ({t['share']*100:.0f}%)")
+        elif chosen_type:
+            st.caption(f"**{chosen_type}** — not enough classified filings for "
+                       f"a per-type view yet; showing its industry (SIC) "
+                       f"figures instead.")
         if cr.get("inconclusive"):
             # point 8: the SIC(s) describe no goods/services — route, don't guess
             st.warning(cr.get("message") or
@@ -354,7 +407,9 @@ else:
         elif not cr["classes"]:
             st.warning("No class data for this industry.")
         else:
-            st.caption(f"Industry = SIC {', '.join(sics)} · {cr['total']:,} trademarks.")
+            if not chosen_type:
+                st.caption(f"Industry = SIC {', '.join(sics)} · "
+                           f"{cr['total']:,} trademarks.")
             cls_df = pd.DataFrame([{
                 "Keep": c["tier"] != "d",
                 "Band": _chip(c),
@@ -385,7 +440,12 @@ else:
                     st.markdown(f"**{_chip(c)} · Class {c['class']} — "
                                 f"{c['heading']}**  ({c['pct']}%)")
                     with st.spinner(f"Loading class {c['class']} terms…"):
-                        tr = c_term_rec(tuple(sics), c["class"])
+                        # Terms come from the SIC seed. If the user picked a
+                        # business type outside this company's SIC ("Something
+                        # else…"), look terms up under the TYPE's own SICs.
+                        term_sics = tuple(rec.type_sics(chosen_type) or sics) \
+                            if chosen_type else tuple(sics)
+                        tr = c_term_rec(term_sics, c["class"])
                     if not tr["terms"]:
                         st.write("_No terms found._")
                     else:
