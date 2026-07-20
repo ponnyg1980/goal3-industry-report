@@ -316,7 +316,20 @@ if _stage == "build1":
     st.markdown(_cards("one", "Reading the register, your sector and "
                               "Companies House…"), unsafe_allow_html=True)
     _num0 = st.session_state.get("company_number", "")
-    _prof0 = c_ch_profile(_num0)
+    _prof0 = c_ch_profile(_num0) if _num0 else None
+    if not _prof0:
+        # Trading style / register-only: no SIC to warm, so warm the business
+        # type's class data instead and look the name up on the register.
+        try:
+            _bt0 = st.session_state.get("tn_type")
+            if _bt0:
+                c_type_rec(_bt0)
+            _nm0 = (st.session_state.get("trading_name")
+                    or st.session_state.get("owner_name") or "")
+            if _nm0:
+                c_similar(_nm0)
+        except Exception:
+            pass
     if _prof0:
         _s0 = _prof0.get("sic_codes") or []
         try:
@@ -347,8 +360,17 @@ if _stage == "build2":
 
 
 # ── STAGE 3: the report ──────────────────────────────────────────────
+# The report used to REQUIRE a Companies House number: no number meant a
+# silent bounce back to the input screen, which is what made "pick a trading
+# style, choose a business type, press the button" appear to do nothing at
+# all. But a trading style with a business type is a complete brief — it is
+# the whole point of asking — and a register-only owner has no CH number by
+# definition. So the gate is now "do we know WHO and WHAT", not "do we have
+# a company number".
 _num = st.session_state.get("company_number", "")
-if not _num:
+_tn_ss = (st.session_state.get("trading_name") or "").strip()
+_cand_pre = st.session_state.get("candidate") or {}
+if not (_num or _tn_ss or _cand_pre.get("ipo_identifiers")):
     st.session_state["stage"] = "input"
     st.rerun()
 
@@ -384,8 +406,8 @@ def _reg_lookup(*names):
     return None
 
 
-prof = c_ch_profile(_num)
-if not prof:
+prof = c_ch_profile(_num) if _num else None
+if _num and not prof:
     st.warning("We couldn't load that company from Companies House — it may "
                "have been dissolved or renamed.")
     if st.button("Start again"):
@@ -393,15 +415,34 @@ if not prof:
         st.rerun()
     st.stop()
 
-sector_company = prof
-sics = prof.get("sic_codes") or []
-appl = {"name": prof.get("name"), "ipo_identifier": None}
-reg = _reg_lookup(prof.get("name"), query)
-if reg:
-    marks = reg[0]["trademarks"]
-    appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
-
-company_name = prof.get("name") or query
+if prof:
+    sector_company = prof
+    sics = prof.get("sic_codes") or []
+    appl = {"name": prof.get("name"), "ipo_identifier": None}
+    reg = _reg_lookup(prof.get("name"), query)
+    if reg:
+        marks = reg[0]["trademarks"]
+        appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
+    company_name = prof.get("name") or query
+else:
+    # No Companies House record: either a pure trading style (scenario 3) or
+    # a register-only owner (scenario 4). There is no SIC to inherit, so the
+    # sector comes from the business type they told us — which is exactly why
+    # step 2 asks for it. Everything downstream already has a `not sics`
+    # branch, so this needs no further special-casing.
+    _owner_nm = (_cand_pre.get("display_name") or _tn_ss
+                 or query or "Your brand")
+    sector_company = {"name": _owner_nm,
+                      "number": _cand_pre.get("company_number")}
+    sics = []
+    _iids = _cand_pre.get("ipo_identifiers") or []
+    appl = {"name": _owner_nm,
+            "ipo_identifier": _iids[0] if _iids else None}
+    reg = _reg_lookup(_owner_nm, query)
+    if reg:
+        marks = reg[0]["trademarks"]
+        appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
+    company_name = _owner_nm
 if trading_name:
     display_name = trading_name
     reg_tn = _reg_lookup(trading_name)
@@ -684,7 +725,12 @@ if _stage == "input2":
                    "⬛ All use this · 🟩 Most · 🟧 Some · 🟥 A few. Untick anything you "
                    "don't need, then download your selection below.")
 
-        if not (da.query_runs_ready() and sics and sector_company):
+        # A business type is a complete basis for recommendations on its own —
+        # the sweep bands 'Solicitor or law firm' from 206 real filings. So a
+        # trading style with no company behind it still gets classes; only a
+        # visitor who has given us NEITHER a SIC nor a type falls through.
+        _bt_only = st.session_state.get("tn_business_type")
+        if not (da.query_runs_ready() and (sics or _bt_only)):
             st.info("Sector recommendations aren't available for this company right now.")
         else:
             # ── View toggle: whole SIC vs specific business type ──────────────
@@ -692,7 +738,7 @@ if _stage == "input2":
             # different filing patterns. If the SIC maps to more than one business
             # type, ask which one this company is and use the classification sweep's
             # per-type bands + the characteristic terms that disambiguate the classes.
-            candidates = c_candidates(tuple(sics))
+            candidates = c_candidates(tuple(sics)) if sics else []
             chosen_type = None
             # Trading Name Mode with "different sector": the user already told us the
             # business type — use it, don't ask again.
@@ -981,8 +1027,12 @@ if da.query_runs_ready():
                    "a good sign for your brand name.")
     else:
         tgt = []
-        if sics:
-            _cr = c_class_rec(tuple(sics))
+        _bt_risk = st.session_state.get("tn_business_type")
+        if sics or _bt_risk:
+            # Class overlap is what turns a lookalike name into a real
+            # conflict, so a trading style with no SIC must still get its
+            # target classes — from the business type instead.
+            _cr = c_class_rec(tuple(sics)) if sics else c_type_rec(_bt_risk)
             tgt = [c["class"] for c in _cr.get("classes", [])
                    if c.get("tier") in ("a", "b")]
         risk_res = rk.assess(
