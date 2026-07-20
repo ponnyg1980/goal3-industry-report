@@ -739,8 +739,8 @@ if _stage == "input2":
                "conclusion is earned by something you tell us, and if yours is "
                "a straightforward case, we'll say so.")
 
-    _n_sim = sum((risk_res or {}).get("counts", {}).values()) if risk_res else 0
-
+    # (_n_sim was computed at the top of this stage from the cached register
+    # check — do NOT re-derive it from risk_res, which only exists in reveal 2)
     q1_idx = st.radio(asmt.Q1["question"],
                       range(len(asmt.Q1["options"])),
                       format_func=lambda i: asmt.Q1["options"][i][0],
