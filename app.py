@@ -104,6 +104,31 @@ _link_company = (_qp.get("company") or "").strip()
 
 import nuggets as nug
 
+
+def _cards(which: str, message: str) -> str:
+    """Render a nugget set, tolerating a stale `nuggets` module.
+
+    Streamlit reloads app.py on deploy but keeps already-imported modules in
+    sys.modules — so a NEW attribute or signature in nuggets.py can be absent
+    at runtime until the app is rebooted (the same sys.modules trap noted in
+    CLAUDE.md for the Vienna work). A loading screen must never be the thing
+    that breaks a deploy, so we degrade instead of raising.
+    """
+    all_ = getattr(nug, "NUGGETS", [])
+    sets = {"one": getattr(nug, "SET_ONE", None) or all_[:4],
+            "two": getattr(nug, "SET_TWO", None) or all_[4:]}
+    cards = sets.get(which) or all_
+    try:
+        return nug.carousel_html(cards, message=message)
+    except TypeError:            # older signature: no per-set argument
+        try:
+            return nug.carousel_html(message=message)
+        except Exception:
+            return f"<p style='text-align:center;padding:40px'>{message}</p>"
+    except Exception:
+        return f"<p style='text-align:center;padding:40px'>{message}</p>"
+
+
 _stage = st.session_state.get("stage", "input")
 if _link_company and _stage == "input":
     # Magic link: straight past the form to the build.
@@ -196,9 +221,8 @@ if _stage == "input":
 
 # ── STAGE: build 1 — the register and the sector ─────────────────────
 if _stage == "build1":
-    st.markdown(nug.carousel_html(nug.SET_ONE,
-                message="Reading the register, your sector and Companies House…"),
-                unsafe_allow_html=True)
+    st.markdown(_cards("one", "Reading the register, your sector and "
+                              "Companies House…"), unsafe_allow_html=True)
     _num0 = st.session_state.get("company_number", "")
     _prof0 = c_ch_profile(_num0)
     if _prof0:
@@ -219,9 +243,8 @@ if _stage == "build1":
 
 # ── STAGE: build 2 — tailoring to their answers ──────────────────────
 if _stage == "build2":
-    st.markdown(nug.carousel_html(nug.SET_TWO,
-                message="Tailoring your report to the classes and answers "
-                        "you gave us…"), unsafe_allow_html=True)
+    st.markdown(_cards("two", "Tailoring your report to the classes and "
+                              "answers you gave us…"), unsafe_allow_html=True)
     try:
         for _c in st.session_state.get("kept_classes", [])[:6]:
             c_term_rec(tuple(st.session_state.get("sics", [])), _c)
