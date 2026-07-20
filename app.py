@@ -101,35 +101,143 @@ if not da.query_runs_ready():
 _qp = st.query_params
 _link_company = (_qp.get("company") or "").strip()
 
-# ── input ────────────────────────────────────────────────────────────
-# This tool is strictly UK limited companies — the report is built from the
-# Companies House record (SIC → sector). The FREE SEARCH wizard is the tool
-# for brand names; this one starts from the company.
-with st.form("lookup"):
-    name = st.text_input("Input UK Company Name",
-                         placeholder="e.g. Greggs Plc",
-                         help="We find your company on Companies House and "
-                              "build the report from its official record. "
-                              "Searching for a brand name instead? Use our "
-                              "Free Trademark Search.")
-    submitted = st.form_submit_button("Find my company on Companies House")
+# ══════════════════════════════════════════════════════════════════════
+# TWO-STAGE FLOW (Jonathan, 20 Jul)
+#   1. input   — everything we need, in one place
+#   2. loading — the build runs while "Did you know" cards teach and sell
+#   3. report  — the reveal, uninterrupted
+#
+# Cleaner to read, but it also fixes a real defect: with input and output
+# interleaved, every dropdown click re-ran the whole page. Now the report
+# builds once, from settled inputs.
+# ══════════════════════════════════════════════════════════════════════
+import nuggets as nug
 
-# Persist the search across reruns — without this, picking from any dropdown
-# below blanks the page (the form only reports True on the click's run).
-if submitted and name.strip():
-    st.session_state["query"] = name.strip()
-query = st.session_state.get("query", "")
-if not query and not _link_company:
-    st.info("Enter your UK company name and we'll find it on Companies House, "
-            "then show you how businesses like yours protect their trademarks.")
+_stage = st.session_state.get("stage", "input")
+if _link_company and _stage == "input":
+    # Magic link: straight past the form to the build.
+    st.session_state["company_number"] = _link_company
+    st.session_state["trading_name"] = (_qp.get("tn") or "").strip()
+    try:
+        st.session_state["trading_years"] = float(_qp.get("tny") or 0) or None
+    except (TypeError, ValueError):
+        st.session_state["trading_years"] = None
+    st.session_state["tn_same_sector"] = True
+    st.session_state["tn_type"] = None
+    _stage = st.session_state["stage"] = "loading"
+
+
+# ── STAGE 1: input ───────────────────────────────────────────────────
+if _stage == "input":
+    st.subheader("Let's find your company")
+    st.caption("This report is built from your official Companies House "
+               "record, so we start there. Looking up a brand name rather "
+               "than a company? Use our Free Trademark Search instead.")
+
+    _name = st.text_input("Input UK Company Name", placeholder="e.g. Greggs Plc")
+    if _name.strip():
+        st.session_state["query"] = _name.strip()
+
+    _q = st.session_state.get("query", "")
+    _chosen = None
+    if _q:
+        if ch.ready():
+            _hits = c_ch_search(_q)
+            if not _hits:
+                st.warning("We couldn't find a company with that name — check "
+                           "the spelling, or try the full registered name.")
+            else:
+                _labels = [f"{h['title']} — {h['company_number']} "
+                           f"({h.get('status','')})" for h in _hits]
+                _i = st.selectbox("Select your company", range(len(_hits)),
+                                  format_func=lambda i: _labels[i])
+                _chosen = _hits[_i]["company_number"]
+        else:
+            st.error("Companies House lookup is unavailable right now.")
+
+    _tn, _tny, _same, _type = "", None, True, None
+    if _chosen:
+        with st.expander("Do you trade under a different name?"):
+            st.markdown(
+                "This report is based on your **registered company name**. If "
+                "your customers know you by something else — a brand over the "
+                "door, on your website, on your invoices — that trading name "
+                "is what needs protecting. Switch it on and we'll run the "
+                "report on that instead.")
+            if st.toggle("Use Trading Name Mode"):
+                _tn = st.text_input("Your trading name")
+                _same = st.radio("Same sector and industry as your company?",
+                                 ["Yes", "No"], horizontal=True,
+                                 help="Yes: keep the sector picture from your "
+                                      "Companies House record. No: tell us the "
+                                      "business type and we'll use that.") == "Yes"
+                if not _same:
+                    _type = st.selectbox("What kind of business trades under "
+                                         "this name?", rec.all_types(),
+                                         index=None, placeholder="Start typing…")
+                _tny = st.number_input(
+                    "How long have you traded under this name? (years)",
+                    min_value=0.0, max_value=100.0, step=0.5, value=0.0,
+                    help="Time in genuine use builds unregistered rights and "
+                         "strengthens an application.")
+
+        st.divider()
+        if st.button("Build my report", type="primary",
+                     use_container_width=True):
+            st.session_state.update(
+                company_number=_chosen, trading_name=_tn.strip(),
+                trading_years=_tny or None, tn_same_sector=_same,
+                tn_type=_type, stage="loading")
+            st.rerun()
     st.stop()
 
-# These get populated by whichever path runs, then drive the sector panel + export.
-appl = {}          # {name, ipo_identifier}
+
+# ── STAGE 2: loading — the cards run while the work happens ──────────
+if _stage == "loading":
+    st.markdown(nug.carousel_html(message="Reading the register, your sector "
+                                          "and Companies House…"),
+                unsafe_allow_html=True)
+    _num0 = st.session_state.get("company_number", "")
+    _prof0 = c_ch_profile(_num0)
+    if _prof0:
+        _s0 = _prof0.get("sic_codes") or []
+        # Warm every slow call while the cards hold the screen, so the reveal
+        # is instant: SIC seeding (possibly a live seed), classes, the
+        # register risk check, sector and benchmark.
+        try:
+            if _s0:
+                rec.ensure_seeded(_s0)
+                c_class_rec(tuple(_s0))
+            _subj0 = st.session_state.get("trading_name") or _prof0.get("name")
+            c_similar(_subj0)
+            if _s0 and da.query_runs_ready():
+                c_sector(_s0[0])
+                c_benchmark(_num0, tuple(_s0))
+        except Exception:
+            pass          # the report re-requests anything that failed
+    st.session_state["stage"] = "report"
+    st.rerun()
+
+
+# ── STAGE 3: the report ──────────────────────────────────────────────
+_num = st.session_state.get("company_number", "")
+if not _num:
+    st.session_state["stage"] = "input"
+    st.rerun()
+
+query = st.session_state.get("query", "")
+trading_name = (st.session_state.get("trading_name") or "").strip()
+trading_years = st.session_state.get("trading_years")
+tn_same_sector = st.session_state.get("tn_same_sector", True)
+st.session_state["tn_business_type"] = (
+    None if tn_same_sector else st.session_state.get("tn_type"))
+
+appl = {}
 marks = []
 sics = []
-sector_company = None  # {name, number, sic_codes}
-rec_html = None    # populated by the recommendations section, downloaded at the end
+sector_company = None
+rec_html = None
+
 
 def _reg_lookup(*names):
     """Registry search that tolerates legal suffixes: tries each candidate
@@ -149,131 +257,53 @@ def _reg_lookup(*names):
     return None
 
 
-# ── one simple search: Companies House first, registry marks attached ─
-if _link_company and ch.ready():
-    # Magic-link path: the company number came on the URL, so go straight to
-    # the profile — the client clicks and the report opens ready for them.
-    prof = c_ch_profile(_link_company)
-    if not prof:
-        st.warning("The company in this link couldn't be found on Companies "
-                   "House — it may have been dissolved or renamed. Search "
-                   "above instead.")
-        st.stop()
-    sector_company = prof
-    sics = prof.get("sic_codes") or []
-    appl = {"name": prof.get("name"), "ipo_identifier": None}
-    reg = _reg_lookup(prof.get("name"))
-    if reg:
-        marks = reg[0]["trademarks"]
-        appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
-elif ch.ready():
-    hits = c_ch_search(query)
-    if not hits:
-        st.warning("We couldn't find a company with that name — check the "
-                   "spelling or try the registered company name.")
-        st.stop()
-    labels = [f"{h['title']} — {h['company_number']} ({h.get('status','')})"
-              for h in hits]
-    idx = st.selectbox("Select your company", range(len(hits)),
-                       format_func=lambda i: labels[i])
-    prof = c_ch_profile(hits[idx]["company_number"])
-    if not prof:
-        st.warning("We couldn't fetch that company's details — please try again.")
-        st.stop()
-    sector_company = prof
-    sics = prof.get("sic_codes") or []
-    appl = {"name": prof.get("name"), "ipo_identifier": None}
-    # Does this company also hold any trademarks in Temmy? (best-effort)
-    reg = _reg_lookup(prof.get("name"), query)
-    if reg:
-        marks = reg[0]["trademarks"]
-        appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
-else:
-    # Fallback (no Companies House key): trademark registry only.
-    results = c_search(query)
-    if not results:
-        st.warning("We couldn't find that name in the trademark registry — "
-                   "check the spelling or try the registered company name.")
-        st.stop()
-    labels = [f"{r['applicant'].get('name','?')}  "
-              f"({len(r['trademarks'])} marks)" for r in results]
-    idx = st.selectbox("Select your company", range(len(results)),
-                       format_func=lambda i: labels[i])
-    appl = results[idx]["applicant"]
-    marks = results[idx]["trademarks"]
-    if da.query_runs_ready():
-        sector_company = c_applicant_sic(appl.get("ipo_identifier"))
-        sics = (sector_company or {}).get("sic_codes") or []
+prof = c_ch_profile(_num)
+if not prof:
+    st.warning("We couldn't load that company from Companies House — it may "
+               "have been dissolved or renamed.")
+    if st.button("Start again"):
+        st.session_state["stage"] = "input"
+        st.rerun()
+    st.stop()
 
-# ── Trading Name Mode (item 5) ───────────────────────────────────────
-# Many businesses trade under a name that isn't their registered company name.
-# The trademark that matters is the name customers actually see — so in this
-# mode the report runs on the trading name, while sector intelligence still
-# comes from the company (or a manually chosen business type).
-company_name = (sector_company or {}).get("name") or appl.get("name") or query
-trading_name = ""
-trading_years = None
-tn_same_sector = True
-with st.expander("Trading Names — do you trade under a different name?"):
-    st.markdown(
-        "This report is based on your **registered company name**. If your "
-        "customers know you by a different name — a brand over the door, on "
-        "your website, on your invoices — that trading name is what needs "
-        "protecting. Switch to Trading Name Mode and we'll run the report on "
-        "it instead.")
-    tn_on = st.toggle("Use Trading Name Mode", value=bool(_qp.get("tn")))
-    tn_type = None
-    if tn_on:
-        trading_name = st.text_input("Your trading name",
-                                     value=(_qp.get("tn") or ""))
-        tn_same_sector = st.radio(
-            f"Same sector and industry as {company_name}?",
-            ["Yes", "No"], horizontal=True,
-            help="Yes: we keep the sector picture from your company's "
-                 "Companies House record. No: tell us the business type "
-                 "below and we'll build it from that instead.") == "Yes"
-        if not tn_same_sector:
-            tn_type = st.selectbox(
-                "What kind of business trades under this name?",
-                rec.all_types(), index=None, placeholder="Start typing…")
-        trading_years = st.number_input(
-            "How long have you been trading under this name? (years)",
-            min_value=0.0, max_value=100.0, step=0.5,
-            value=float(_qp.get("tny") or 0) or 0.0,
-            help="Time in genuine use matters: it builds unregistered "
-                 "(passing-off) rights and strengthens an application.")
-        st.caption("Also worth knowing — we check these with you at audit: "
-                   "whether anyone else has registered a company in this "
-                   "name, and what evidence of use you hold (website, "
-                   "invoices, signage, social). Bring examples.")
+sector_company = prof
+sics = prof.get("sic_codes") or []
+appl = {"name": prof.get("name"), "ipo_identifier": None}
+reg = _reg_lookup(prof.get("name"), query)
+if reg:
+    marks = reg[0]["trademarks"]
+    appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
 
-if trading_name.strip():
-    tn = trading_name.strip()
-    # The report subject becomes the trading name…
-    display_name = tn
-    # …its marks are whatever the registry holds for that name…
-    reg_tn = _reg_lookup(tn)
+company_name = prof.get("name") or query
+if trading_name:
+    display_name = trading_name
+    reg_tn = _reg_lookup(trading_name)
     marks = reg_tn[0]["trademarks"] if reg_tn else []
     if reg_tn:
         appl = reg_tn[0]["applicant"]
-    # …and if they said "different sector", the chosen business type replaces
-    # the company's SIC as the sector source: the recommendations section
-    # picks it up as the pre-selected business-type view.
-    st.session_state["tn_business_type"] = tn_type if not tn_same_sector else None
-    # Instant collision check: does anyone else own a COMPANY in this name?
     if ch.ready():
-        tn_hits = c_ch_search(tn) or []
-        clash = [h for h in tn_hits
-                 if h.get("title", "").upper().replace(" LIMITED", "").replace(" LTD", "")
-                 == tn.upper()]
-        if clash:
-            st.warning(f"Heads-up: **{len(clash)} compan"
-                       f"{'y is' if len(clash)==1 else 'ies are'} registered at "
-                       f"Companies House under this exact name** — worth "
-                       f"reviewing in the audit, because a company registration "
-                       f"isn't a trademark but it can signal a competing claim.")
+        _clash = [h for h in (c_ch_search(trading_name) or [])
+                  if h.get("title", "").upper()
+                  .replace(" LIMITED", "").replace(" LTD", "")
+                  == trading_name.upper()]
+        if _clash:
+            st.warning(f"Heads-up: **{len(_clash)} compan"
+                       f"{'y is' if len(_clash)==1 else 'ies are'} registered "
+                       f"at Companies House under this exact name** — worth "
+                       f"reviewing in the audit, because a company "
+                       f"registration isn't a trademark but it can signal a "
+                       f"competing claim.")
 else:
     display_name = company_name
+
+_hdr, _btn = st.columns([5, 1])
+with _btn:
+    if st.button("↻ New report", use_container_width=True):
+        for _k in ("stage", "company_number", "query", "trading_name",
+                   "trading_years", "tn_type", "logged_report"):
+            st.session_state.pop(_k, None)
+        st.rerun()
+
 st.header(display_name)
 if trading_name.strip():
     st.caption(f"Trading name of **{company_name}**"
