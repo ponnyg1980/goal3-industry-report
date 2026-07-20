@@ -754,6 +754,39 @@ if q1_idx is not None and q3_idx is not None:
                        use_container_width=True)
 
 
+# ── Report ledger: one row per report, for follow-up + Zoho ──────────
+import ledger as _led
+
+if "logged_report" not in st.session_state:
+    _c_led = (risk_res or {}).get("counts", {})
+    _base = st.secrets.get("REPORT_BASE_URL", "") if hasattr(st, "secrets") else ""
+    _led.record(
+        company_name=(sector_company or {}).get("name") or display_name,
+        company_number=(sector_company or {}).get("number"),
+        company_status=(sector_company or {}).get("status"),
+        incorporated=(sector_company or {}).get("incorporated"),
+        sic_codes=sics,
+        business_type=chosen_type if "chosen_type" in dir() else None,
+        trading_name=trading_name or None,
+        trading_years=trading_years or None,
+        classes_shown=[c["class"] for c in cr.get("classes", [])] if "cr" in dir() else None,
+        viability_master=_v["master"] if "_v" in dir() else None,
+        uniqueness=_v["scores"]["uniqueness"] if "_v" in dir() else None,
+        distinctiveness=_v["scores"]["distinctiveness"] if "_v" in dir() else None,
+        proof_of_use=_v["scores"]["proof_of_use"] if "_v" in dir() else None,
+        conflicts=_v["scores"]["conflicts"] if "_v" in dir() else None,
+        marks_held=len(marks),
+        risk_high=_c_led.get("High Risk", 0),
+        risk_medium=_c_led.get("Medium Risk", 0),
+        risk_low=_c_led.get("Low Risk", 0),
+        risk_total=sum(_c_led.values()) if _c_led else 0,
+        report_url=_led.report_url(_base, (sector_company or {}).get("number") or "",
+                                   trading_name=trading_name or "",
+                                   trading_years=trading_years),
+    )
+    st.session_state["logged_report"] = True
+
+
 # ── Next step: Brand Audit (item 10) ─────────────────────────────────
 st.divider()
 st.header("How much is it?")
