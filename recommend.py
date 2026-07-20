@@ -228,6 +228,39 @@ def term_recommendations(sics, cls: int, limit: int = 25) -> dict:
     m = map_sic_codes(sics)
     row = next((c for c in m.get('classes', []) if c['nice_class'] == cls), None)
     terms = (row or {}).get('terms') or []
+
+    # The batch seed only attaches terms to a SIC's TOP 8 classes (cost
+    # control). But a client can open ANY class we show them — class 42 is
+    # rank 10 for SIC 32990, so it came back with no terms at all, which reads
+    # as "we have nothing for you". Fetch that one class's terms live (~0.6s)
+    # and write them back, so it's a one-time cost per class.
+    if row is not None and not terms:
+        try:
+            import os
+            from freesearch import sic_seed as _ss
+            base = (os.environ.get('TEMMY_API_BASE_URL') or '').strip()
+            key = (os.environ.get('TEMMY_QUERY_RUNS_API_KEY') or '').strip()
+            if base and key:
+                seed = _ss.load_seed()
+                for sic in [str(c).strip() for c in (sics or [])]:
+                    rec_ = seed.get(sic)
+                    if not rec_:
+                        continue
+                    tgt = next((c for c in rec_.get('classes', [])
+                                if int(c['nice_class']) == cls), None)
+                    if tgt is None or tgt.get('terms'):
+                        continue
+                    fetched = _ss.sic_class_terms(sic, cls, base=base, key=key)
+                    if fetched:
+                        tgt['terms'] = fetched
+                        terms = fetched
+                        try:
+                            _ss._write_json(_ss.SEED_JSON, seed)
+                        except Exception:
+                            pass
+                        break
+        except Exception:
+            pass
     out = []
     for t in terms[:limit]:
         tier = t.get('band', 'd')
