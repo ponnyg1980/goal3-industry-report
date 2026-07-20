@@ -362,7 +362,7 @@ if not _sector_terms and sics:
 _years = trading_years if trading_name.strip() else \
          vb.years_since((sector_company or {}).get("incorporated"))
 _v = vb.compute(name=display_name,
-                n_similar=len((risk_res or {}).get("marks", [])),
+                n_similar=sum(_c.values()) if _c else 0,
                 high=_c.get("High Risk", 0), medium=_c.get("Medium Risk", 0),
                 low=_c.get("Low Risk", 0),
                 years=_years, sector_terms=_sector_terms)
@@ -701,6 +701,60 @@ st.caption("Print-ready — open the file and use your browser's "
            "Print → Save as PDF.")
 
 
+# ── Braudit 3-Question Assessment ────────────────────────────────────
+import assessment as asmt
+
+st.divider()
+st.header("Does your situation need professional help?")
+st.caption("Three honest questions. Nothing here is rigged — every "
+           "conclusion is earned by something you tell us, and if yours is "
+           "a straightforward case, we'll say so.")
+
+_n_sim = sum((risk_res or {}).get("counts", {}).values()) if risk_res else 0
+
+q1_idx = st.radio(asmt.Q1["question"],
+                  range(len(asmt.Q1["options"])),
+                  format_func=lambda i: asmt.Q1["options"][i][0],
+                  index=None, key="asmt_q1")
+if q1_idx is not None:
+    st.caption(asmt.Q1["options"][q1_idx][2])
+
+st.markdown(f"**{asmt.Q2['question']}**")
+if _n_sim:
+    st.info(f"Our search found **{_n_sim} similar marks** on the register, "
+            f"so we've ticked the first one for you — it's a fact of your "
+            f"report, not a hypothetical.")
+q2_none = st.checkbox(asmt.Q2["none_option"][0], key="asmt_q2none")
+q2_flags = []
+if not q2_none:
+    for i, (label, _pts, _note) in enumerate(asmt.Q2["options"]):
+        default = (i == 0 and _n_sim > 0)
+        if st.checkbox(label, value=default, key=f"asmt_q2_{i}"):
+            q2_flags.append(i)
+else:
+    st.caption(asmt.Q2["none_option"][1])
+
+q3_idx = st.radio(asmt.Q3["question"],
+                  range(len(asmt.Q3["options"])),
+                  format_func=lambda i: asmt.Q3["options"][i][0],
+                  index=None, key="asmt_q3")
+if q3_idx is not None:
+    st.caption(asmt.Q3["options"][q3_idx][2])
+
+if q1_idx is not None and q3_idx is not None:
+    _res = asmt.score(q1_idx, q2_flags, q2_none, q3_idx)
+    _copy = asmt.result_copy(_res, n_similar=_n_sim)
+    st.subheader(_copy["title"])
+    st.markdown(_copy["body_md"])
+    _b1, _b2 = st.columns(2)
+    with _b1:
+        st.link_button(_copy["primary"][0], _copy["primary"][1],
+                       type="primary", use_container_width=True)
+    with _b2:
+        st.link_button(_copy["secondary"][0], _copy["secondary"][1],
+                       use_container_width=True)
+
+
 # ── Next step: Brand Audit (item 10) ─────────────────────────────────
 st.divider()
 st.header("How much is it?")
@@ -742,7 +796,16 @@ st.markdown(
     "Our application success rate over the past 12 months is **98%**, against "
     "an industry average of about 83% — and that gap is mostly down to the "
     "research done at audit stage.")
-if st.button("Book my Brand Audit — £99", type="primary"):
-    st.success("Brilliant — we'll be in touch to book your consultation. "
-               "(Booking link to be wired: Zoho booking / calendar URL.)")
-    st.session_state["cta_juris"] = {"now": juris_now, "planned": juris_plan}
+_c1, _c2, _c3 = st.columns(3)
+with _c1:
+    st.link_button("Request Brand Audit — £99",
+                   "https://www.thetrademarkhelpline.com/request-brand-audit/",
+                   type="primary", use_container_width=True)
+with _c2:
+    st.link_button("Talk to us — book a call",
+                   "https://link.cerebrumai.io/widget/booking/ZArxD6BnggpV7bsSF0ks",
+                   use_container_width=True)
+with _c3:
+    st.link_button("Make an enquiry",
+                   "https://www.thetrademarkhelpline.com/make-an-enquiry/",
+                   use_container_width=True)

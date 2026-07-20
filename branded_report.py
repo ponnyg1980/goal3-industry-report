@@ -184,6 +184,13 @@ def render_recommendations(company_name, sics, selection) -> str:
   <div class="foot">A starting point based on what this industry typically protects — not legal
      advice. Final class/term selection should be confirmed for the specific goods and services.<br>
      The Trademark Helpline · Source: UK IPO registry (TemmyDB) + Companies House.</div>
+
+  <div class="next-steps">
+    <b>Next steps</b>
+    <a href="https://www.thetrademarkhelpline.com/make-an-enquiry/">Make an Enquiry</a> ·
+    <a href="https://link.cerebrumai.io/widget/booking/ZArxD6BnggpV7bsSF0ks">Talk to Us — book a call</a> ·
+    <a href="https://www.thetrademarkhelpline.com/request-brand-audit/">Request Brand Audit</a>
+  </div>
 </body></html>"""
 
 
@@ -261,6 +268,9 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
   table, .clsrow {{ page-break-inside: avoid; }}
   .foot {{ margin-top: 28px; color:{SLATE}; font-size: 10px;
            border-top:1px solid #eee; padding-top: 8px; }}
+.next-steps{margin-top:26px;padding:14px 18px;border:1px solid #E4E7EC;border-radius:12px;font-size:13px}
+.next-steps b{display:block;margin-bottom:6px}
+.next-steps a{color:#1D1D1B;font-weight:600}
 </style></head><body>
   <div class="hdr">
     <div>{'<img src="'+logo+'"/>' if logo else '<strong>The Trademark Helpline</strong>'}</div>
@@ -287,4 +297,11 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
      The Trademark Helpline · Source: UK IPO registry (TemmyDB).
      Figures reflect companies matched to Companies House SIC codes. This report
      is informational and not legal advice.</div>
+
+  <div class="next-steps">
+    <b>Next steps</b>
+    <a href="https://www.thetrademarkhelpline.com/make-an-enquiry/">Make an Enquiry</a> ·
+    <a href="https://link.cerebrumai.io/widget/booking/ZArxD6BnggpV7bsSF0ks">Talk to Us — book a call</a> ·
+    <a href="https://www.thetrademarkhelpline.com/request-brand-audit/">Request Brand Audit</a>
+  </div>
 </body></html>"""

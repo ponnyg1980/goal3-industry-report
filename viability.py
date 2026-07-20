@@ -28,8 +28,13 @@ from __future__ import annotations
 import re
 from datetime import date
 
-WEIGHTS = {'conflicts': 0.35, 'uniqueness': 0.25,
-           'distinctiveness': 0.20, 'proof_of_use': 0.20}
+# Structure (Jonathan, 20 Jul): Uniqueness + Distinctiveness + Proof of Use
+# are the POSITIVE group ("Brand Strengths"); Conflicts is the NEGATIVE — a
+# drag applied to the strengths. Master = strengths minus the conflict drag,
+# floored at 50.
+STRENGTH_WEIGHTS = {'uniqueness': 0.35, 'distinctiveness': 0.40,
+                    'proof_of_use': 0.25}
+CONFLICT_DRAG = 0.40          # how hard conflict pressure pulls the master down
 MASTER_FLOOR = 50
 
 # Ordinary trade language that weakens a mark. Deliberately generic-only —
@@ -53,14 +58,22 @@ def _clamp(x):
 
 
 def uniqueness(n_similar: int) -> int:
-    """95 when the register shows nothing like it, sliding down as the
-    crowd grows. 50 similar marks ≈ a very busy name."""
-    return _clamp(95 - n_similar * 1.6)
+    """95 when the register shows nothing like it, sliding down as the crowd
+    grows. Uses the TOTAL flagged (not a display cap); softens after the
+    first dozen — 20 vs 200 similar marks is a difference of degree."""
+    return _clamp(95 - min(n_similar * 0.9, 75))
 
 
 def conflicts(high: int, medium: int, low: int) -> int:
-    """High risks dominate: one High costs more than ten Lows."""
-    return _clamp(100 - (high * 22 + medium * 4 + low * 0.8))
+    """Conflict pressure, scored as headroom (100 = clear, 0 = blocked).
+
+    Per-band CAPS are the honesty fix: severity must dominate volume. The old
+    linear sum let 191 Low-risk marks zero the dial — telling someone whose
+    risks are all LOW that conflicts are catastrophic, the opposite of what
+    "low risk" means. Now Low can never cost more than 10 points in total,
+    Medium 25, while genuine High risks properly hurt (20 each, up to 60)."""
+    penalty = min(high * 20, 60) + min(medium * 2.5, 25) + min(low * 0.08, 10)
+    return _clamp(100 - penalty)
 
 
 def distinctiveness(name: str, sector_terms=()) -> int:
@@ -97,9 +110,19 @@ def years_since(iso_date: str | None) -> float | None:
         return None
 
 
+def strengths_composite(scores: dict) -> int:
+    return round(sum(scores[k] * w for k, w in STRENGTH_WEIGHTS.items()))
+
+
 def master(scores: dict) -> int:
-    m = sum(scores[k] * w for k, w in WEIGHTS.items())
-    return max(MASTER_FLOOR, round(m))
+    """Strengths minus the conflict drag, floored.
+
+    The three positives set the ceiling; conflict pressure (100 - the
+    conflicts headroom score) pulls it down. 191 Lows ≈ 4-point drag; three
+    genuine Highs ≈ 24-point drag."""
+    positive = strengths_composite(scores)
+    drag = (100 - scores['conflicts']) * CONFLICT_DRAG
+    return max(MASTER_FLOOR, round(positive - drag))
 
 
 def compute(*, name: str, n_similar: int, high: int, medium: int, low: int,
@@ -115,12 +138,12 @@ def compute(*, name: str, n_similar: int, high: int, medium: int, low: int,
 
 # ── rendering (HTML/CSS radial gauges; Streamlit + branded report) ──────────
 
-LABELS = {
+STRENGTH_LABELS = {
     'uniqueness': ('Uniqueness', 'How alone your name is on the register'),
-    'conflicts': ('Conflicts', 'How serious the similar marks are'),
     'distinctiveness': ('Distinctiveness', 'How protectable the wording is'),
     'proof_of_use': ('Proof of Use', 'Time in genuine use'),
 }
+CONFLICT_LABEL = ('Conflicts', 'Headroom — how little the similar marks bite')
 
 
 def _colour(v: int) -> str:
@@ -131,19 +154,23 @@ def _colour(v: int) -> str:
     return '#C0392B'
 
 
-def gauge_html(result: dict, *, brand_hex: str = '#1D1D1B') -> str:
-    g = []
-    for key, (label, sub) in LABELS.items():
-        v = result['scores'][key]
-        c = _colour(v)
-        g.append(f"""
+def _dial(v, label, sub):
+    c = _colour(v)
+    return f"""
   <div class="vg">
     <div class="dial" style="background:
       conic-gradient({c} {v * 3.6}deg, #ECEFF1 0deg)">
       <div class="hole"><span>{v}</span></div>
     </div>
     <b>{label}</b><small>{sub}</small>
-  </div>""")
+  </div>"""
+
+
+def gauge_html(result: dict, *, brand_hex: str = '#1D1D1B') -> str:
+    strengths = ''.join(_dial(result['scores'][k], lab, sub)
+                        for k, (lab, sub) in STRENGTH_LABELS.items())
+    cv = result['scores']['conflicts']
+    conflict = _dial(cv, *CONFLICT_LABEL)
     m = result['master']
     mc = _colour(m)
     return f"""
@@ -154,10 +181,17 @@ def gauge_html(result: dict, *, brand_hex: str = '#1D1D1B') -> str:
       <div class="hole"><span>{m}%</span></div>
     </div>
     <b>Trademark Viability</b>
-    <small>Never below {MASTER_FLOOR}% — there is always a route; the dials
-    show where the work is.</small>
+    <small>Strengths minus conflict drag — never below {MASTER_FLOOR}%,
+    because there is always a route.</small>
   </div>
-  <div class="gauges">{''.join(g)}</div>
+  <div class="vgroup pos">
+    <div class="vgh">Brand strengths</div>
+    <div class="gauges">{strengths}</div>
+  </div>
+  <div class="vgroup neg">
+    <div class="vgh">Working against you</div>
+    <div class="gauges">{conflict}</div>
+  </div>
 </div>
 <style>
 .viability{{display:flex;gap:28px;align-items:center;flex-wrap:wrap;
