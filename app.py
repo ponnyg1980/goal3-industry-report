@@ -543,9 +543,18 @@ if _stage == "sector":
               "Mark": (m.get("mark") or {}).get("verbal_element_text"),
               "Status": m.get("status"), "Expiry": m.get("expiry_date")} for m in marks],
             use_container_width=True, hide_index=True)
-    st.caption("ℹ️ Figures are for this legal entity (company number). Large corporate "
-               "groups may hold further trademarks in subsidiaries with separate company "
-               "numbers — those are not aggregated here.")
+    # The subsidiaries caveat only means something when there IS a legal
+    # entity. On the trading-style path there is no company number to be
+    # "this legal entity", so the note would be answering a question nobody
+    # asked — and implying a company record we haven't got.
+    if (sector_company or {}).get("number"):
+        st.caption("ℹ️ Figures are for this legal entity (company number). Large corporate "
+                   "groups may hold further trademarks in subsidiaries with separate company "
+                   "numbers — those are not aggregated here.")
+    else:
+        st.caption("ℹ️ Figures are for this name as it appears on the trademark "
+                   "register. There's no Companies House record behind it, so "
+                   "there's no company portfolio to aggregate.")
 
     # ── sector intelligence (Temmy / Query Runs) ─────────────────────────
     st.header("Sector intelligence")
