@@ -93,20 +93,35 @@ if not da.query_runs_ready():
     st.warning("Sector intelligence is temporarily unavailable — "
                "company and trademark lookups still work.")
 
+# ── magic link (item 2) ──────────────────────────────────────────────
+# A report link like  https://<app>/?company=13327422  opens with the company
+# already loaded — no typing. That's what goes in client emails: one click and
+# the report is theirs. (?tn=Trading+Name&tny=3 optionally pre-fills Trading
+# Name Mode.)
+_qp = st.query_params
+_link_company = (_qp.get("company") or "").strip()
+
 # ── input ────────────────────────────────────────────────────────────
+# This tool is strictly UK limited companies — the report is built from the
+# Companies House record (SIC → sector). The FREE SEARCH wizard is the tool
+# for brand names; this one starts from the company.
 with st.form("lookup"):
-    name = st.text_input("Type your brand or company name",
-                         placeholder="e.g. Greggs")
-    submitted = st.form_submit_button("Build my report")
+    name = st.text_input("Input UK Company Name",
+                         placeholder="e.g. Greggs Plc",
+                         help="We find your company on Companies House and "
+                              "build the report from its official record. "
+                              "Searching for a brand name instead? Use our "
+                              "Free Trademark Search.")
+    submitted = st.form_submit_button("Find my company on Companies House")
 
 # Persist the search across reruns — without this, picking from any dropdown
 # below blanks the page (the form only reports True on the click's run).
 if submitted and name.strip():
     st.session_state["query"] = name.strip()
 query = st.session_state.get("query", "")
-if not query:
-    st.info("Enter your brand or company name to see how your industry "
-            "protects its trademarks.")
+if not query and not _link_company:
+    st.info("Enter your UK company name and we'll find it on Companies House, "
+            "then show you how businesses like yours protect their trademarks.")
     st.stop()
 
 # These get populated by whichever path runs, then drive the sector panel + export.
@@ -135,7 +150,23 @@ def _reg_lookup(*names):
 
 
 # ── one simple search: Companies House first, registry marks attached ─
-if ch.ready():
+if _link_company and ch.ready():
+    # Magic-link path: the company number came on the URL, so go straight to
+    # the profile — the client clicks and the report opens ready for them.
+    prof = c_ch_profile(_link_company)
+    if not prof:
+        st.warning("The company in this link couldn't be found on Companies "
+                   "House — it may have been dissolved or renamed. Search "
+                   "above instead.")
+        st.stop()
+    sector_company = prof
+    sics = prof.get("sic_codes") or []
+    appl = {"name": prof.get("name"), "ipo_identifier": None}
+    reg = _reg_lookup(prof.get("name"))
+    if reg:
+        marks = reg[0]["trademarks"]
+        appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
+elif ch.ready():
     hits = c_ch_search(query)
     if not hits:
         st.warning("We couldn't find a company with that name — check the "
@@ -174,9 +205,79 @@ else:
         sector_company = c_applicant_sic(appl.get("ipo_identifier"))
         sics = (sector_company or {}).get("sic_codes") or []
 
-# Show the matched (canonical) company name, not what was typed.
-display_name = (sector_company or {}).get("name") or appl.get("name") or query
+# ── Trading Name Mode (item 5) ───────────────────────────────────────
+# Many businesses trade under a name that isn't their registered company name.
+# The trademark that matters is the name customers actually see — so in this
+# mode the report runs on the trading name, while sector intelligence still
+# comes from the company (or a manually chosen business type).
+company_name = (sector_company or {}).get("name") or appl.get("name") or query
+trading_name = ""
+trading_years = None
+tn_same_sector = True
+with st.expander("Trading Names — do you trade under a different name?"):
+    st.markdown(
+        "This report is based on your **registered company name**. If your "
+        "customers know you by a different name — a brand over the door, on "
+        "your website, on your invoices — that trading name is what needs "
+        "protecting. Switch to Trading Name Mode and we'll run the report on "
+        "it instead.")
+    tn_on = st.toggle("Use Trading Name Mode", value=bool(_qp.get("tn")))
+    tn_type = None
+    if tn_on:
+        trading_name = st.text_input("Your trading name",
+                                     value=(_qp.get("tn") or ""))
+        tn_same_sector = st.radio(
+            f"Same sector and industry as {company_name}?",
+            ["Yes", "No"], horizontal=True,
+            help="Yes: we keep the sector picture from your company's "
+                 "Companies House record. No: tell us the business type "
+                 "below and we'll build it from that instead.") == "Yes"
+        if not tn_same_sector:
+            tn_type = st.selectbox(
+                "What kind of business trades under this name?",
+                rec.all_types(), index=None, placeholder="Start typing…")
+        trading_years = st.number_input(
+            "How long have you been trading under this name? (years)",
+            min_value=0.0, max_value=100.0, step=0.5,
+            value=float(_qp.get("tny") or 0) or 0.0,
+            help="Time in genuine use matters: it builds unregistered "
+                 "(passing-off) rights and strengthens an application.")
+        st.caption("Also worth knowing — we check these with you at audit: "
+                   "whether anyone else has registered a company in this "
+                   "name, and what evidence of use you hold (website, "
+                   "invoices, signage, social). Bring examples.")
+
+if trading_name.strip():
+    tn = trading_name.strip()
+    # The report subject becomes the trading name…
+    display_name = tn
+    # …its marks are whatever the registry holds for that name…
+    reg_tn = _reg_lookup(tn)
+    marks = reg_tn[0]["trademarks"] if reg_tn else []
+    if reg_tn:
+        appl = reg_tn[0]["applicant"]
+    # …and if they said "different sector", the chosen business type replaces
+    # the company's SIC as the sector source: the recommendations section
+    # picks it up as the pre-selected business-type view.
+    st.session_state["tn_business_type"] = tn_type if not tn_same_sector else None
+    # Instant collision check: does anyone else own a COMPANY in this name?
+    if ch.ready():
+        tn_hits = c_ch_search(tn) or []
+        clash = [h for h in tn_hits
+                 if h.get("title", "").upper().replace(" LIMITED", "").replace(" LTD", "")
+                 == tn.upper()]
+        if clash:
+            st.warning(f"Heads-up: **{len(clash)} compan"
+                       f"{'y is' if len(clash)==1 else 'ies are'} registered at "
+                       f"Companies House under this exact name** — worth "
+                       f"reviewing in the audit, because a company registration "
+                       f"isn't a trademark but it can signal a competing claim.")
+else:
+    display_name = company_name
 st.header(display_name)
+if trading_name.strip():
+    st.caption(f"Trading name of **{company_name}**"
+               + (f" · trading {trading_years:g} years" if trading_years else ""))
 
 # ── company summary ──────────────────────────────────────────────────
 m1, m2, m3 = st.columns(3)
@@ -196,10 +297,15 @@ st.caption("ℹ️ Figures are for this legal entity (company number). Large cor
 
 # ── marks like yours: risk overview (same rules as the Audit Report) ──
 risk_res = None
+_risk_subject = display_name          # trading name when in TN mode
 if da.query_runs_ready():
     st.header("Marks like yours on the register")
+    st.caption("We compare your name against live UK register data using the "
+               "same rules as our paid Audit Report — status, similarity, "
+               "mark type and class overlap. This is what an examiner or an "
+               "opposing brand would see.")
     with st.spinner("Checking the register for similar marks…"):
-        cand = c_similar(query)
+        cand = c_similar(_risk_subject)
     if not cand:
         st.success("No similar marks found on the register — "
                    "a good sign for your brand name.")
@@ -210,7 +316,7 @@ if da.query_runs_ready():
             tgt = [c["class"] for c in _cr.get("classes", [])
                    if c.get("tier") in ("a", "b")]
         risk_res = rk.assess(
-            cand, brand=query, target_classes=tgt,
+            cand, brand=_risk_subject, target_classes=tgt,
             own_applicant_names=[appl.get("name") or "",
                                  (sector_company or {}).get("name") or ""])
         counts = risk_res["counts"]
@@ -230,8 +336,49 @@ if da.query_runs_ready():
                    "classes your industry registers in. Lapsed marks are "
                    "excluded as negligible.")
 
+# ── Trademark Viability Score (item 4) ───────────────────────────────
+st.header("Trademark Viability Score")
+st.caption("One honest number, built from four things we can measure: how "
+           "alone your name is, how serious the similar marks are, how "
+           "protectable the wording is in law, and how long you've used it. "
+           "We never score below 50% overall — there is always a route — "
+           "the dials show where the work is.")
+import viability as vb
+_c = (risk_res or {}).get("counts", {})
+_sector_terms = []
+if 'chosen_type' in dir():
+    pass
+try:
+    _tr = c_type_rec(st.session_state.get("tn_business_type") or "") if st.session_state.get("tn_business_type") else None
+    _sector_terms = [t["text"] for t in (_tr or {}).get("terms", [])]
+except Exception:
+    _sector_terms = []
+if not _sector_terms and sics:
+    try:
+        _sector_terms = [t["term"] for cl in c_class_rec(tuple(sics)).get("classes", [])[:3]
+                         for t in (c_term_rec(tuple(sics), cl["class"]).get("terms", [])[:10])]
+    except Exception:
+        _sector_terms = []
+_years = trading_years if trading_name.strip() else \
+         vb.years_since((sector_company or {}).get("incorporated"))
+_v = vb.compute(name=display_name,
+                n_similar=len((risk_res or {}).get("marks", [])),
+                high=_c.get("High Risk", 0), medium=_c.get("Medium Risk", 0),
+                low=_c.get("Low Risk", 0),
+                years=_years, sector_terms=_sector_terms)
+st.markdown(vb.gauge_html(_v), unsafe_allow_html=True)
+if _v["scores"]["distinctiveness"] < 45:
+    st.caption("Distinctiveness is the dial to talk about: names built from "
+               "everyday trade words are harder to register as words alone — "
+               "but logos, styling and evidence of use are all routes we use "
+               "every week.")
+
+
 # ── sector intelligence (Temmy / Query Runs) ─────────────────────────
 st.header("Sector intelligence")
+st.caption("The register, filtered to businesses like yours: how many "
+           "protect their brand, which classes they use, and who leads. "
+           "This is real filing behaviour — not our opinion.")
 rep = None
 if not da.query_runs_ready():
     st.info("🔒 Add `TEMMY_QUERY_RUNS_API_KEY` to activate sector intelligence.")
@@ -249,7 +396,29 @@ else:
     s2.metric("Companies in sector", f"{size.get('companies', 0):,}")
     s3.metric("Sector first filed", rep.get("first_filed_year") or "—")
     st.subheader("Top 3 companies in the sector")
+    st.caption("The most protected brands in your space. If the leaders in "
+               "your sector hold trademarks, that's the market telling you "
+               "what it takes to compete — see their actual marks below.")
     st.dataframe(rep.get("top_companies", []), use_container_width=True, hide_index=True)
+    # item 6 — proof, not assertion: show each leader's actual trademarks
+    for _tc in (rep.get("top_companies") or [])[:3]:
+        _tc_name = _tc.get("company") or _tc.get("name") or ""
+        if not _tc_name:
+            continue
+        with st.expander(f"View trademarks — {_tc_name}"):
+            _treg = _reg_lookup(_tc_name)
+            if not _treg:
+                st.write("_No marks found under this exact name (they may "
+                         "file through a group company)._")
+            else:
+                st.dataframe(
+                    [{"Mark": (t.get("mark") or {}).get("verbal_element_text")
+                              or t.get("application_number"),
+                      "Number": t.get("application_number"),
+                      "Status": t.get("status"),
+                      "Expiry": t.get("expiry_date")}
+                     for t in _treg[0]["trademarks"][:40]],
+                    use_container_width=True, hide_index=True)
     st.subheader("Class distribution")
 
     def _cls_label(n):
@@ -267,6 +436,10 @@ else:
 bench = None
 if da.query_runs_ready() and sics and sector_company:
     st.header("How they compare")
+    st.caption("Your company against your sector's norms: how common "
+               "protection is, how much the protected hold, and at what "
+               "stage businesses like yours typically file. It answers the "
+               "question every founder asks — am I early, on time, or late?")
     st.caption("Three reference points per metric — the all-industry **MEAN**, "
                "**their industry** (union of their SIC codes), and **this company**. "
                "Counts include all trademarks ever filed (live and lapsed) — a measure "
@@ -351,7 +524,14 @@ else:
     # per-type bands + the characteristic terms that disambiguate the classes.
     candidates = c_candidates(tuple(sics))
     chosen_type = None
-    if len(candidates) > 1:
+    # Trading Name Mode with "different sector": the user already told us the
+    # business type — use it, don't ask again.
+    _tn_bt = st.session_state.get("tn_business_type")
+    if _tn_bt:
+        chosen_type = _tn_bt
+        st.caption(f"Sector basis: **{_tn_bt}** (your trading name's business "
+                   f"type, as you told us — not the registered company's SIC).")
+    elif len(candidates) > 1:
         cand_names = [c["business_type"] for c in candidates]
         options = [f"All of SIC {', '.join(sics)} (industry-wide)"] + cand_names \
                   + ["Something else…"]
@@ -424,7 +604,22 @@ else:
                 disabled=["Band", "Class", "Heading", "% of industry", "Trademarks"])
             kept_class_nums = set(edited[edited["Keep"]]["Class"].tolist())
 
+            # item 8 — a one-class sector needs saying out loud, or the page
+            # looks broken ("where are the classes to choose?").
+            if len(cr["classes"]) == 1:
+                _only = cr["classes"][0]
+                st.info(f"Businesses like yours register in **one class — "
+                        f"Class {_only['class']} ({_only.get('class_label') or _only['heading'][:60]})** — "
+                        f"so there's nothing to choose here: it's pre-selected. "
+                        f"The decisions for you are the *terms* below (what, "
+                        f"specifically, you protect inside that class).")
+
             st.subheader("Terms within kept classes")
+            st.caption("Classes are the shelves; terms are what you put on "
+                       "them. Your registration only protects the goods and "
+                       "services you actually list — so untick anything you "
+                       "don't genuinely offer or intend to. Filing wider than "
+                       "your real trade can be challenged as bad faith.")
             kept_ordered = [c for c in cr["classes"] if c["class"] in kept_class_nums]
             review = st.multiselect(
                 "Review goods/services terms for which classes?",
@@ -437,8 +632,16 @@ else:
             for c in kept_ordered:
                 kept_terms = []
                 if c["class"] in review:
-                    st.markdown(f"**{_chip(c)} · Class {c['class']} — "
-                                f"{c['heading']}**  ({c['pct']}%)")
+                    # item 7 — pick terms knowing what the class IS: short
+                    # label in the header, full official description behind
+                    # an expander so the page stays scannable.
+                    _short_lbl = c.get("class_label") or ""
+                    st.markdown(f"**{_chip(c)} · Class {c['class']}"
+                                f"{' — ' + _short_lbl if _short_lbl else ''}**"
+                                f"  ({c['pct']}%)")
+                    with st.expander(f"What Class {c['class']} covers "
+                                     f"(official description)"):
+                        st.write(c["heading"])
                     with st.spinner(f"Loading class {c['class']} terms…"):
                         # Terms come from the SIC seed. If the user picked a
                         # business type outside this company's SIC ("Something
@@ -474,6 +677,8 @@ else:
 # ── downloads ────────────────────────────────────────────────────────
 st.divider()
 st.header("Downloads")
+st.caption("Everything above as a branded document — yours to keep, share "
+           "with a co-founder, or bring to the audit call.")
 # Top sector applicants' own marks (best-effort, for the report appendix).
 top_marks = {}
 if rep:
@@ -494,3 +699,50 @@ if rec_html:
                        mime="text/html")
 st.caption("Print-ready — open the file and use your browser's "
            "Print → Save as PDF.")
+
+
+# ── Next step: Brand Audit (item 10) ─────────────────────────────────
+st.divider()
+st.header("How much is it?")
+st.caption("Tell us where you trade — protection is per territory, so the "
+           "jurisdictions decide the cost.")
+
+_JURIS = ["United Kingdom", "European Union", "United States", "Australia",
+          "Canada", "New Zealand", "United Arab Emirates", "Switzerland",
+          "Norway", "China", "Japan", "India", "Other / not sure"]
+_jc1, _jc2 = st.columns(2)
+with _jc1:
+    juris_now = st.multiselect("Where do you trade now?", _JURIS,
+                               default=["United Kingdom"])
+with _jc2:
+    juris_plan = st.multiselect("Where do you plan to trade?", _JURIS)
+
+# NOTE: live per-territory quoting hooks into the website's fee calculator —
+# needs its endpoint/fee table wired here. Until then the audit offer carries
+# the CTA and the team quotes on the call.
+_n_territories = len(set(juris_now + juris_plan)) or 1
+st.caption(f"Protection across **{_n_territories} "
+           f"territor{'y' if _n_territories == 1 else 'ies'}** — exact "
+           f"application fees depend on territories and classes; we'll "
+           f"confirm them in your audit consultation.")
+
+st.subheader("Next step: the Brand Audit")
+st.markdown(
+    "We don't advise anyone to file an application without a **Brand Audit** "
+    "first. The audit expands on this quick report with searches across "
+    "**international registers, Companies House, domain registrations, social "
+    "media and online shopping channels** — the places oppositions and "
+    "disputes actually come from.\n\n"
+    "One of our team then walks through the findings with you by phone or "
+    "Teams.\n\n"
+    "The Audit & Consultation is around **2 hours of specialist work — "
+    "normally £299, currently £99**. And if you go on to file with us, the "
+    "£99 is **deducted from your application fees** — so the audit may "
+    "effectively cost you nothing.\n\n"
+    "Our application success rate over the past 12 months is **98%**, against "
+    "an industry average of about 83% — and that gap is mostly down to the "
+    "research done at audit stage.")
+if st.button("Book my Brand Audit — £99", type="primary"):
+    st.success("Brilliant — we'll be in touch to book your consultation. "
+               "(Booking link to be wired: Zoho booking / calendar URL.)")
+    st.session_state["cta_juris"] = {"now": juris_now, "planned": juris_plan}
