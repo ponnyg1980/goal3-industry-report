@@ -169,12 +169,13 @@ if _link_company and _stage == "input":
 
 # ── STAGE: input 1 — find the company ────────────────────────────────
 if _stage == "input":
-    st.subheader("Let's find your company")
-    st.caption("This report is built from your official Companies House "
-               "record, so we start there. Looking up a brand name rather "
-               "than a company? Use our Free Trademark Search instead.")
+    st.subheader("Step 1 · Who are you?")
+    st.caption("Type the registered company name, or the name trademarks are "
+               "held in — we search Companies House and the UK trademark "
+               "register together, so either works.")
 
-    _name = st.text_input("Input UK Company Name", placeholder="e.g. Greggs Plc")
+    _name = st.text_input("Company or trademark owner name",
+                          placeholder="e.g. Greggs Plc")
     if _name.strip():
         st.session_state["query"] = _name.strip()
 
@@ -193,9 +194,9 @@ if _stage == "input":
                 "trademark register. Check the spelling, or try the full "
                 "registered name.")
             st.info("Trading under a name that isn't a registered company? "
-                    "That's common and still protectable — switch on "
-                    "**Trading Name Mode** below and we'll build the report "
-                    "around the name itself.")
+                    "That's common, and still protectable — carry on to "
+                    "step 2 and we'll build the report around the name "
+                    "itself.")
         else:
             _i = st.selectbox("Select your company", range(len(_hits)),
                               format_func=lambda i: rsv.label(_hits[i]))
@@ -222,41 +223,67 @@ if _stage == "input":
                     "a partnership or an individual. We'll build the report "
                     "from the marks themselves.")
 
+    # ── Step 2 · trading style ────────────────────────────────────────
+    # This used to be a toggle called "Trading Name Mode", buried inside a
+    # collapsed expander. Two problems: nobody opens an expander they don't
+    # already know they need, and "mode" is our word, not theirs. So it is
+    # now simply the second field — pre-filled with whatever they picked,
+    # and editable. Leaving it alone is the common case and costs nothing;
+    # changing it is self-explanatory.
     _tn, _tny, _same, _type = "", None, True, None
-    # Open the panel whenever they've searched: scenario 3 (found nowhere)
-    # and scenario 4 (register only, no CH number) both NEED this route, and
-    # both previously hit a dead end because the gate was `if _chosen`.
-    _tn_forced = bool(_q) and _cand is None
     if _q:
-        with st.expander("Do you trade under a different name?",
-                         expanded=_tn_forced):
-            st.markdown(
-                "This report is based on your **registered company name**. If "
-                "your customers know you by something else — a brand over the "
-                "door, on your website, on your invoices — that trading name "
-                "is what needs protecting. Switch it on and we'll run the "
-                "report on that instead.")
-            if st.toggle("Use Trading Name Mode", value=_tn_forced):
-                _tn = st.text_input("Your trading name")
-                _same = st.radio("Same sector and industry as your company?",
-                                 ["Yes", "No"], horizontal=True,
-                                 help="Yes: keep the sector picture from your "
-                                      "Companies House record. No: tell us the "
-                                      "business type and we'll use that.") == "Yes"
-                if not _same:
-                    _type = st.selectbox("What kind of business trades under "
-                                         "this name?", rec.all_types(),
-                                         index=None, placeholder="Start typing…")
-                _tny = st.number_input(
-                    "How long have you traded under this name? (years)",
-                    min_value=0.0, max_value=100.0, step=0.5, value=0.0,
-                    help="Time in genuine use builds unregistered rights and "
-                         "strengthens an application.")
+        st.divider()
+        st.subheader("Step 2 · What do your customers call you?")
+
+        _default_style = (_cand or {}).get("display_name") or _q
+        # Key includes the candidate, so picking a different company re-fills
+        # the box instead of leaving the previous company's name in it.
+        _style = st.text_input(
+            "Trading style",
+            value=_default_style,
+            key=f"tstyle::{(_cand or {}).get('key') or _q}",
+            help="The name your customers actually know you by — over the "
+                 "door, on the website, on the invoice. This is the name we "
+                 "check for conflicts, because it's the one that needs "
+                 "protecting.")
+        _style = (_style or "").strip()
+
+        _differs = (da.norm_company_name(_style)
+                    != da.norm_company_name(_default_style))
+        if _differs and _style:
+            _tn = _style
+            st.caption(f"We'll build the report around **{_style}**, not the "
+                       "registered name.")
+            _same = st.radio("Same sector and industry as the company?",
+                             ["Yes", "No"], horizontal=True,
+                             help="Yes: keep the sector picture from the "
+                                  "Companies House record. No: tell us the "
+                                  "business type and we'll use that.") == "Yes"
+            if not _same:
+                _type = st.selectbox("What kind of business trades under "
+                                     "this name?", rec.all_types(),
+                                     index=None, placeholder="Start typing…")
+            _tny = st.number_input(
+                "How long have you traded under this name? (years)",
+                min_value=0.0, max_value=100.0, step=0.5, value=0.0,
+                help="Time in genuine use builds unregistered rights and "
+                     "strengthens an application.")
+        elif _cand is None and _style:
+            # Nothing found on either register — the trading style IS the
+            # subject of the report, so we still need the sector from them.
+            _tn = _style
+            _same = False
+            _type = st.selectbox("What kind of business is it?",
+                                 rec.all_types(), index=None,
+                                 placeholder="Start typing…")
+            _tny = st.number_input(
+                "How long have you traded under this name? (years)",
+                min_value=0.0, max_value=100.0, step=0.5, value=0.0)
 
         st.divider()
-        _ready = bool(_chosen) or bool(_cand) or bool(_tn.strip())
-        if not _ready and _q:
-            st.caption("Pick a company above, or give us a trading name, "
+        _ready = bool(_chosen) or bool(_cand) or bool(_style)
+        if not _ready:
+            st.caption("Pick a company above, or give us a trading style, "
                        "and we'll build the report.")
         if st.button("See how my industry protects itself →", type="primary",
                      use_container_width=True, disabled=not _ready):
