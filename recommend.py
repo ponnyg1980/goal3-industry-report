@@ -1,153 +1,158 @@
 """
-Goal #1 — Classes & Terms Recommendations by SIC code.
+Goal #1/#3 — Classes & Terms Recommendations.
 
-For a company's SIC code(s) (union), recommend the Nice classes and the
-goods/services terms commonly used in that industry, each banded by how
-frequently it appears:
+RECONCILED (18 Jul 2026): this module no longer carries its own class logic.
+It delegates to the shared `freesearch` engine so the report, the free-search
+wizard and the class-assistant widget all show the SAME numbers from the SAME
+source. Previously goal3 rolled its own SQL and bands (Always/Often at 25/15,
+counted by trademark, whole register) which drifted from everything else.
 
-    Always   (Black)  — most common
-    Often    (Green)
-    Sometimes(Amber)
-    Rarely   (Red)    — long tail
+What the shared engine brings here:
+  • Corpus = UK Registered marks, last 3 years, Company/Organisation applicants.
+  • Bands  = All use this / Most use this / Some use this / A few have this
+             (from freesearch.bands — the one place the words live).
+  • Empirical seed → instant (no 25s live aggregation per report).
+  • Inconclusive SICs (70229 etc.) are flagged and routed, not guessed.
+  • Business-type view (SaaS vs Fintech vs Cybersecurity, all SIC 62012) with
+    characteristic TERMS — because the class number alone is ambiguous and the
+    description is what tells a designer's class 42 from a coder's.
 
-Classes are banded by % of the sector's trademarks that include the class.
-Terms are split from the free-text goods/services descriptions (';'-delimited),
-normalised, and banded by % of that class's trademarks that use the term.
-
-All live via Temmy Query Runs.
+The public shape is unchanged, so branded_report.py / app.py keep working:
+  class_recommendations(sics) -> {total, classes:[{class,heading,trademarks,
+                                   pct,band,colour, share,tier,terms}], ...}
+  term_recommendations(sics, cls) -> {class_total, terms:[{term,trademarks,
+                                       pct,band,colour}]}
 """
 from __future__ import annotations
 
-from data_access import run_sql, run_scalar, _sic_pred, _safe_sic, query_runs_ready  # noqa
+import sys
+from pathlib import Path
 
-# ── Nice classification standard class headings (abbreviated) ────────
-NICE_HEADINGS = {
-    1: "Chemicals for industry, science & agriculture",
-    2: "Paints, varnishes, colorants",
-    3: "Cosmetics & cleaning preparations",
-    4: "Industrial oils, greases, fuels & lighting",
-    5: "Pharmaceuticals & medical/veterinary preparations",
-    6: "Common metals & goods of metal",
-    7: "Machines & machine tools; motors",
-    8: "Hand tools & implements",
-    9: "Computers, software & scientific/electrical apparatus",
-    10: "Medical, surgical & dental apparatus",
-    11: "Lighting, heating, cooking, refrigerating apparatus",
-    12: "Vehicles & apparatus for locomotion",
-    13: "Firearms, ammunition, explosives, fireworks",
-    14: "Precious metals, jewellery, horological instruments",
-    15: "Musical instruments",
-    16: "Paper, stationery, printed matter",
-    17: "Rubber, plastics, insulating materials",
-    18: "Leather goods, luggage, bags, umbrellas",
-    19: "Non-metallic building materials",
-    20: "Furniture, mirrors, picture frames",
-    21: "Household & kitchen utensils, glassware",
-    22: "Ropes, nets, tents, sacks; raw fibrous materials",
-    23: "Yarns & threads for textile use",
-    24: "Textiles & textile substitutes; household linen",
-    25: "Clothing, footwear, headgear",
-    26: "Lace, ribbons, buttons, haberdashery",
-    27: "Carpets, rugs, mats, wall hangings",
-    28: "Games, toys, sporting goods",
-    29: "Meat, fish, dairy, prepared foods",
-    30: "Coffee, tea, bread, cereals, confectionery, sauces",
-    31: "Raw agricultural & horticultural products; live animals",
-    32: "Beers, soft drinks, juices, mineral waters",
-    33: "Alcoholic beverages (except beers)",
-    34: "Tobacco & smokers' articles",
-    35: "Advertising, business management, retail services",
-    36: "Insurance, financial & real-estate services",
-    37: "Construction, installation & repair services",
-    38: "Telecommunications",
-    39: "Transport, packaging & storage; travel arrangement",
-    40: "Treatment of materials; manufacturing services",
-    41: "Education, training, entertainment, sport & culture",
-    42: "Scientific & technological services; software design",
-    43: "Food & drink services; temporary accommodation",
-    44: "Medical, veterinary, hygiene & agricultural services",
-    45: "Legal & security services; personal/social services",
-}
+# The engine is vendored into this repo (goal3/freesearch/, see vendor_engine.py)
+# so goal3 deploys self-contained. Ensure this dir is importable, then use the
+# vendored package — never the parent's, so local == Cloud.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 
-# ── Banding (fixed % of the industry; tunable) ───────────────────────
-# class bands = % of the sector's trademarks that include the class
-CLASS_BANDS = [(25, "Always", "#1D1D1B"),   # Black
-               (15, "Often", "#2E7D32"),     # Green
-               (5,  "Sometimes", "#E69500"), # Amber
-               (0,  "Rarely", "#C0392B")]     # Red
-# term bands = % of the class's trademarks that use the term
-TERM_BANDS = [(20, "Always", "#1D1D1B"),
-              (10, "Often", "#2E7D32"),
-              (3,  "Sometimes", "#E69500"),
-              (0,  "Rarely", "#C0392B")]
+from freesearch.sic_engine import map_sic_codes            # noqa: E402
+from freesearch.bands import TIER_LABELS, tier_for          # noqa: E402
+from freesearch import taxonomy as _tx                      # noqa: E402
+from freesearch.nice_labels import short as _short          # noqa: E402
+
+try:
+    from nice_classes import NICE_HEADINGS                   # full official headings
+except Exception:                                            # pragma: no cover
+    NICE_HEADINGS = {}
+
+# Tier -> display colour (kept close to the old palette so the report styling
+# needs no change; strongest = black, weakest = red).
+TIER_COLOUR = {'a': '#1D1D1B', 'b': '#2E7D32', 'c': '#E69500', 'd': '#C0392B'}
 
 
-def _band(pct, bands):
-    for threshold, label, colour in bands:
-        if pct is not None and pct >= threshold:
-            return label, colour
-    return bands[-1][1], bands[-1][2]
+def _heading(cls: int) -> str:
+    return NICE_HEADINGS.get(cls) or _short(cls)
 
 
-def _sector_total(pred) -> int:
-    row = run_scalar(
-        "SELECT count(distinct at.trademark_id) n "
-        "FROM companies c JOIN applicants a ON a.company_id=c.id "
-        "JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
-        f"WHERE {pred}")
-    return row.get("n", 0) or 0
+def _row(c: dict) -> dict:
+    """Map an engine class row to the report's shape (+ new fields)."""
+    tier = c.get('tier', 'd')
+    share = c.get('share')
+    return {
+        'class': c['nice_class'],
+        'heading': _heading(c['nice_class']),
+        'class_label': c.get('class_label') or _short(c['nice_class']),
+        'trademarks': c.get('n_marks'),          # may be None for concordance
+        'pct': round((share or 0) * 100, 1),
+        'share': share,
+        'tier': tier,
+        'band': TIER_LABELS.get(tier, ''),       # "All use this" etc.
+        'colour': TIER_COLOUR.get(tier, '#C0392B'),
+        'terms': c.get('terms') or [],
+    }
 
 
 def class_recommendations(sics) -> dict:
-    """Per Nice class: trademark count, % of sector, band + colour."""
-    pred = _sic_pred(sics)
-    total = _sector_total(pred)
-    if not total:
-        return {"total": 0, "classes": []}
-    rows = run_sql(
-        "SELECT nc.number cls, count(distinct nct.trademark_id) n "
-        "FROM companies c JOIN applicants a ON a.company_id=c.id "
-        "JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
-        "JOIN nice_class_trademarks nct ON nct.trademark_id=at.trademark_id AND nct.active "
-        "JOIN nice_classes nc ON nc.id=nct.nice_class_id "
-        f"WHERE {pred} GROUP BY nc.number ORDER BY 2 DESC")
-    out = []
-    for r in rows:
-        cls = r["cls"]
-        pct = round(r["n"] / total * 100, 1)
-        label, colour = _band(pct, CLASS_BANDS)
-        out.append({"class": cls, "heading": NICE_HEADINGS.get(cls, ""),
-                    "trademarks": r["n"], "pct": pct,
-                    "band": label, "colour": colour})
-    return {"total": total, "classes": out}
+    """Per Nice class for the company's SIC(s), banded, from the shared engine.
+
+    Returns total=0 with `inconclusive`/`message`/`routes` when the SIC(s)
+    describe no goods or services (point 8), so the report can route the user
+    to the competitor-mark / website / description tools instead of guessing.
+    """
+    m = map_sic_codes(sics)
+    if m.get('inconclusive'):
+        return {'total': 0, 'classes': [], 'inconclusive': True,
+                'message': m.get('message'), 'routes': m.get('routes', []),
+                'inconclusive_sics': m.get('inconclusive_sics', [])}
+    classes = [_row(c) for c in m.get('classes', [])]
+    total = sum(c['trademarks'] for c in classes if c['trademarks']) or len(classes)
+    return {'total': total, 'classes': classes,
+            'method': m.get('method'),
+            'skipped_inconclusive': m.get('skipped_inconclusive', [])}
+
+
+def class_recommendations_for_type(business_type: str) -> dict:
+    """Business-type view — the clean split the SIC alone can't give.
+
+    Reads the classification sweep's type_seed (SaaS vs Fintech vs Cybersecurity
+    etc.), including the characteristic terms per type. Falls back to the SIC
+    view when the type isn't banded.
+    """
+    import json
+    seed = _HERE / 'freesearch' / 'data' / 'type_seed.json'
+    data = json.loads(seed.read_text()) if seed.exists() else {}
+    rec = data.get(business_type)
+    if not rec:
+        # fall back to the type's SIC(s)
+        sics = _type_sics(business_type)
+        out = class_recommendations(sics) if sics else {'total': 0, 'classes': []}
+        out['business_type'] = business_type
+        out['source'] = 'sic-fallback'
+        return out
+    classes = []
+    for c in rec['classes']:
+        tier = c.get('band') or tier_for(c.get('share', 0))
+        classes.append({
+            'class': c['nice_class'], 'heading': _heading(c['nice_class']),
+            'class_label': _short(c['nice_class']),
+            'trademarks': c.get('n_marks'), 'pct': round(c.get('share', 0) * 100, 1),
+            'share': c.get('share'), 'tier': tier,
+            'band': TIER_LABELS.get(tier, ''), 'colour': TIER_COLOUR.get(tier, '#C0392B'),
+        })
+    return {'business_type': business_type, 'source': 'sweep',
+            'total': rec.get('total_marks', 0), 'classes': classes,
+            'terms': rec.get('terms', [])}
+
+
+def _type_sics(business_type: str) -> list[str]:
+    for _sector, types in _tx.SECTORS.items():
+        if business_type in types:
+            return [str(c) for c in types[business_type]]
+    return []
 
 
 def term_recommendations(sics, cls: int, limit: int = 25) -> dict:
-    """Top goods/services terms within one class for the industry, banded."""
-    pred = _sic_pred(sics)
+    """Top goods/services terms within one class for the industry.
+
+    Now served from the empirical seed (already attached to each class by the
+    engine) — instant, and identical to what the widget shows. No live query.
+    """
     cls = int(cls)
-    class_total = run_scalar(
-        "SELECT count(distinct nct.trademark_id) n "
-        "FROM companies c JOIN applicants a ON a.company_id=c.id "
-        "JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
-        "JOIN nice_class_trademarks nct ON nct.trademark_id=at.trademark_id AND nct.active "
-        "JOIN nice_classes nc ON nc.id=nct.nice_class_id "
-        f"WHERE {pred} AND nc.number={cls}").get("n", 0) or 0
-    if not class_total:
-        return {"class_total": 0, "terms": []}
-    rows = run_sql(
-        "SELECT lower(btrim(term)) t, count(distinct nct.trademark_id) n "
-        "FROM companies c JOIN applicants a ON a.company_id=c.id "
-        "JOIN applicant_trademarks at ON at.applicant_id=a.id AND at.active "
-        "JOIN nice_class_trademarks nct ON nct.trademark_id=at.trademark_id AND nct.active "
-        "JOIN nice_classes nc ON nc.id=nct.nice_class_id "
-        "CROSS JOIN LATERAL unnest(string_to_array(nct.goods_services_description, ';')) term "
-        f"WHERE {pred} AND nc.number={cls} AND length(btrim(term)) BETWEEN 3 AND 80 "
-        f"GROUP BY 1 ORDER BY 2 DESC LIMIT {int(limit)}")
+    m = map_sic_codes(sics)
+    row = next((c for c in m.get('classes', []) if c['nice_class'] == cls), None)
+    terms = (row or {}).get('terms') or []
     out = []
-    for r in rows:
-        pct = round(r["n"] / class_total * 100, 1)
-        label, colour = _band(pct, TERM_BANDS)
-        out.append({"term": r["t"], "trademarks": r["n"], "pct": pct,
-                    "band": label, "colour": colour})
-    return {"class_total": class_total, "terms": out}
+    for t in terms[:limit]:
+        tier = t.get('band', 'd')
+        share = t.get('share')
+        out.append({'term': t['text'], 'trademarks': t.get('n_marks'),
+                    'pct': round((share or 0) * 100, 1),
+                    'tier': tier,
+                    'band': TIER_LABELS.get(tier, ''),
+                    'colour': TIER_COLOUR.get(tier, '#C0392B')})
+    return {'class_total': (row or {}).get('n_marks', 0), 'terms': out}
+
+
+# Back-compat: some callers imported NICE_HEADINGS from here.
+__all__ = ['class_recommendations', 'class_recommendations_for_type',
+           'term_recommendations', 'NICE_HEADINGS']

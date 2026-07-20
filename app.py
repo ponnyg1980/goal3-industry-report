@@ -20,6 +20,7 @@ import data_access as da
 import companies_house as ch
 import branded_report as br
 import recommend as rec
+import risk as rk
 
 
 # ── cached data calls (Streamlit re-runs the whole script per click) ──
@@ -37,6 +38,11 @@ def c_term_rec(sics_tuple, cls):
 @st.cache_data(ttl=1800, show_spinner=False)
 def c_search(name):
     return da.search_company(name, limit=50)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_similar(brand):
+    return da.similar_marks(brand)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -68,36 +74,29 @@ st.set_page_config(page_title="Industry Trademark Report", layout="wide")
 st.title("Industry Trademark Report")
 st.caption("MOAT for Braudit · Goal #3 — company + sector trademark intelligence")
 
-# ── connection status ────────────────────────────────────────────────
-c1, c2, c3 = st.columns(3)
-if da.api_ready() and da.health():
-    c1.success("Temmy API: connected")
-else:
-    c1.error("Temmy API: not reachable")
-if da.query_runs_ready():
-    c2.success("Query Runs: live")
-else:
-    c2.warning("Query Runs: pending key")
-if ch.ready():
-    c3.success("Companies House: live")
-else:
-    c3.warning("Companies House: no key (registry-only lookups)")
-st.divider()
+# ── service status (client-facing: only speak up when something is down) ──
+if not (da.api_ready() and da.health()):
+    st.error("Our trademark data service is temporarily unavailable — "
+             "please try again in a few minutes.")
+    st.stop()
+if not da.query_runs_ready():
+    st.warning("Sector intelligence is temporarily unavailable — "
+               "company and trademark lookups still work.")
 
 # ── input ────────────────────────────────────────────────────────────
-source = st.radio(
-    "Find a company via",
-    ["Trademark registry (has marks)", "Companies House (any UK company)"],
-    horizontal=True,
-    help="Companies House lets you look up any company, including ones with no "
-         "trademarks. It needs the free CH API key.")
-
 with st.form("lookup"):
-    name = st.text_input("Company name", placeholder="e.g. Greggs")
-    submitted = st.form_submit_button("Build report")
+    name = st.text_input("Type your brand or company name",
+                         placeholder="e.g. Greggs")
+    submitted = st.form_submit_button("Build my report")
 
-if not submitted or not name.strip():
-    st.info("Enter a company name to build its industry trademark report.")
+# Persist the search across reruns — without this, picking from any dropdown
+# below blanks the page (the form only reports True on the click's run).
+if submitted and name.strip():
+    st.session_state["query"] = name.strip()
+query = st.session_state.get("query", "")
+if not query:
+    st.info("Enter your brand or company name to see how your industry "
+            "protects its trademarks.")
     st.stop()
 
 # These get populated by whichever path runs, then drive the sector panel + export.
@@ -105,19 +104,59 @@ appl = {}          # {name, ipo_identifier}
 marks = []
 sics = []
 sector_company = None  # {name, number, sic_codes}
+rec_html = None    # populated by the recommendations section, downloaded at the end
 
-# ── PATH A: Trademark registry (Temmy) ───────────────────────────────
-if source.startswith("Trademark"):
-    st.header(f"Company: {name}")
-    results = c_search(name.strip())
+def _reg_lookup(*names):
+    """Registry search that tolerates legal suffixes: tries each candidate
+    name, then the same with LIMITED/LTD/PLC/LLP stripped ('GREGGS PLC'
+    finds nothing; 'GREGGS' finds the marks)."""
+    import re as _re
+    tried = set()
+    for n in names:
+        n = (n or "").strip()
+        for cand in (n, _re.sub(r"\s+(LIMITED|LTD|PLC|LLP)\.?$", "", n,
+                                flags=_re.I).strip()):
+            if cand and cand.upper() not in tried:
+                tried.add(cand.upper())
+                r = c_search(cand)
+                if r:
+                    return r
+    return None
+
+
+# ── one simple search: Companies House first, registry marks attached ─
+if ch.ready():
+    hits = c_ch_search(query)
+    if not hits:
+        st.warning("We couldn't find a company with that name — check the "
+                   "spelling or try the registered company name.")
+        st.stop()
+    labels = [f"{h['title']} — {h['company_number']} ({h.get('status','')})"
+              for h in hits]
+    idx = st.selectbox("Select your company", range(len(hits)),
+                       format_func=lambda i: labels[i])
+    prof = c_ch_profile(hits[idx]["company_number"])
+    if not prof:
+        st.warning("We couldn't fetch that company's details — please try again.")
+        st.stop()
+    sector_company = prof
+    sics = prof.get("sic_codes") or []
+    appl = {"name": prof.get("name"), "ipo_identifier": None}
+    # Does this company also hold any trademarks in Temmy? (best-effort)
+    reg = _reg_lookup(prof.get("name"), query)
+    if reg:
+        marks = reg[0]["trademarks"]
+        appl["ipo_identifier"] = reg[0]["applicant"].get("ipo_identifier")
+else:
+    # Fallback (no Companies House key): trademark registry only.
+    results = c_search(query)
     if not results:
-        st.warning("No matching applicant found in the registry. "
-                   "Try the Companies House option for companies without marks.")
+        st.warning("We couldn't find that name in the trademark registry — "
+                   "check the spelling or try the registered company name.")
         st.stop()
     labels = [f"{r['applicant'].get('name','?')}  "
-              f"(IPO {r['applicant'].get('ipo_identifier','?')}, "
-              f"{len(r['trademarks'])} marks)" for r in results]
-    idx = st.selectbox("Matched applicant", range(len(results)),
+              f"({len(r['trademarks'])} marks)" for r in results]
+    idx = st.selectbox("Select your company", range(len(results)),
                        format_func=lambda i: labels[i])
     appl = results[idx]["applicant"]
     marks = results[idx]["trademarks"]
@@ -125,33 +164,9 @@ if source.startswith("Trademark"):
         sector_company = c_applicant_sic(appl.get("ipo_identifier"))
         sics = (sector_company or {}).get("sic_codes") or []
 
-# ── PATH B: Companies House (any company) ────────────────────────────
-else:
-    if not ch.ready():
-        st.error("Companies House lookups need a free API key. Add "
-                 "`COMPANIES_HOUSE_API_KEY` to temmy-access/secrets.env "
-                 "(register at developer.company-information.service.gov.uk).")
-        st.stop()
-    st.header(f"Company: {name}")
-    hits = c_ch_search(name.strip())
-    if not hits:
-        st.warning("No companies found on Companies House for that name.")
-        st.stop()
-    labels = [f"{h['title']} — {h['company_number']} ({h.get('status','')})"
-              for h in hits]
-    idx = st.selectbox("Companies House match", range(len(hits)),
-                       format_func=lambda i: labels[i])
-    prof = c_ch_profile(hits[idx]["company_number"])
-    if not prof:
-        st.warning("Couldn't fetch that company's profile.")
-        st.stop()
-    sector_company = prof
-    sics = prof.get("sic_codes") or []
-    appl = {"name": prof.get("name"), "ipo_identifier": None}
-    # Does this company also hold any trademarks in Temmy? (best-effort)
-    reg = c_search(prof.get("name") or name)
-    if reg:
-        marks = reg[0]["trademarks"]
+# Show the matched (canonical) company name, not what was typed.
+display_name = (sector_company or {}).get("name") or appl.get("name") or query
+st.header(display_name)
 
 # ── company summary ──────────────────────────────────────────────────
 m1, m2, m3 = st.columns(3)
@@ -168,6 +183,42 @@ if marks:
 st.caption("ℹ️ Figures are for this legal entity (company number). Large corporate "
            "groups may hold further trademarks in subsidiaries with separate company "
            "numbers — those are not aggregated here.")
+
+# ── marks like yours: risk overview (same rules as the Audit Report) ──
+risk_res = None
+if da.query_runs_ready():
+    st.header("Marks like yours on the register")
+    with st.spinner("Checking the register for similar marks…"):
+        cand = c_similar(query)
+    if not cand:
+        st.success("No similar marks found on the register — "
+                   "a good sign for your brand name.")
+    else:
+        tgt = []
+        if sics:
+            _cr = c_class_rec(tuple(sics))
+            tgt = [c["class"] for c in _cr.get("classes", [])
+                   if c.get("tier") in ("a", "b")]
+        risk_res = rk.assess(
+            cand, brand=query, target_classes=tgt,
+            own_applicant_names=[appl.get("name") or "",
+                                 (sector_company or {}).get("name") or ""])
+        counts = risk_res["counts"]
+        r1, r2, r3 = st.columns(3)
+        r1.metric("🔴 High risk", counts.get("High Risk", 0))
+        r2.metric("🟠 Medium risk", counts.get("Medium Risk", 0))
+        r3.metric("🟢 Low risk", counts.get("Low Risk", 0))
+        st.dataframe(
+            [{"Risk": x["risk"], "Mark": x.get("verbal_element_text"),
+              "Owner": x.get("applicant_name"), "Status": x.get("status"),
+              "Type": x.get("mark_type"),
+              "Classes": ", ".join(str(c) for c in (x.get("classes") or []))}
+             for x in risk_res["marks"]],
+            use_container_width=True, hide_index=True)
+        st.caption("Banded with the same rules as our Audit Report: status, "
+                   "similarity to your name, mark type and overlap with the "
+                   "classes your industry registers in. Lapsed marks are "
+                   "excluded as negligible.")
 
 # ── sector intelligence (Temmy / Query Runs) ─────────────────────────
 st.header("Sector intelligence")
@@ -190,8 +241,17 @@ else:
     st.subheader("Top 3 companies in the sector")
     st.dataframe(rep.get("top_companies", []), use_container_width=True, hide_index=True)
     st.subheader("Class distribution")
-    st.bar_chart({str(r["nice_class"]): r["trademarks"]
-                  for r in rep.get("class_distribution", [])})
+
+    def _cls_label(n):
+        """'09 · Electronics & software' — zero-padded so chart order is numeric."""
+        h = rec.NICE_HEADINGS.get(int(n), "")
+        h = (h[:34] + "…") if len(h) > 35 else h
+        return f"{int(n):02d} · {h}" if h else f"{int(n):02d}"
+
+    st.bar_chart({_cls_label(r["nice_class"]): r["trademarks"]
+                  for r in sorted(rep.get("class_distribution", []),
+                                  key=lambda r: int(r["nice_class"]))})
+    st.caption("Nice classes (1–45) — the categories trademarks are registered under.")
 
 # ── benchmarking: company vs industry vs all-industry MEAN ───────────
 bench = None
@@ -253,44 +313,51 @@ if da.query_runs_ready() and sics and sector_company:
          "Their industry": yr["industry"], "This company": yr["company"]},
     ], use_container_width=True, hide_index=True)
 
-# ── export ───────────────────────────────────────────────────────────
-st.divider()
-report_html = br.render(company_name=(sector_company or {}).get("name") or appl.get("name") or name,
-                        applicant=appl, marks=marks,
-                        sector_company=sector_company, sector=rep, benchmark=bench)
-st.download_button("⬇ Export branded report (HTML)", data=report_html,
-                   file_name=f"industry_report_{name.strip().replace(' ', '_')}.html",
-                   mime="text/html")
-st.caption("Branded, print-to-PDF ready. Server-side PDF can be added via pdfkit.")
+# ── Goal #1: Class & term recommendations (editable, downloadable) ────
+# Keyed on tier (a/b/c/d), not the band words — so if the wording in
+# freesearch.bands changes, this UI follows automatically.
+_TIER_EMOJI = {"a": "⬛", "b": "🟩", "c": "🟧", "d": "🟥"}
 
-# ── Goal #1: Class & term recommendations (editable, savable) ─────────
-_BAND_EMOJI = {"Always": "⬛ Always", "Often": "🟩 Often",
-               "Sometimes": "🟧 Sometimes", "Rarely": "🟥 Rarely"}
+
+def _chip(row):
+    """'⬛ All use this' from a row carrying tier + band label."""
+    return f"{_TIER_EMOJI.get(row.get('tier', 'd'), '🟥')} {row.get('band', '')}"
+
 
 st.divider()
 st.header("Class & term recommendations")
-st.caption("Suggested Nice classes and goods/services terms for this company's "
-           "industry, banded by how commonly each is used: "
-           "⬛ Always · 🟩 Often · 🟧 Sometimes · 🟥 Rarely. Untick anything they "
-           "don't need, then save their selection.")
+st.caption("Suggested Nice classes and goods/services terms for your industry, "
+           "banded by how many businesses like yours protect each: "
+           "⬛ All use this · 🟩 Most · 🟧 Some · 🟥 A few. Untick anything you "
+           "don't need, then download your selection below.")
 
 if not (da.query_runs_ready() and sics and sector_company):
-    st.info("Needs Query Runs and a company with SIC codes.")
+    st.info("Sector recommendations aren't available for this company right now.")
 else:
-    audience = st.radio("Audience", ["Client", "Staff"], horizontal=True,
-                        help="Client = branded download only. Staff = branded + CSV.")
-    if st.button("Generate class & term recommendations"):
-        st.session_state["rec_go"] = True
-
-    if st.session_state.get("rec_go"):
-        cr = c_class_rec(tuple(sics))
-        if not cr["classes"]:
+    with st.container():
+        with st.spinner("Building class & term recommendations…"):
+            cr = c_class_rec(tuple(sics))
+        if cr.get("inconclusive"):
+            # point 8: the SIC(s) describe no goods/services — route, don't guess
+            st.warning(cr.get("message") or
+                       "This SIC code doesn't describe the goods or services "
+                       "specifically enough to suggest classes.")
+            for s in cr.get("inconclusive_sics", []):
+                st.caption(f"SIC {s['sic']} — {s['reason']}")
+            st.markdown("**Better ways to get this right:**")
+            for rt in cr.get("routes", []):
+                # TODO: once the website URLs for these tools are confirmed,
+                # link each label (e.g. free-search wizard / contact form).
+                st.markdown(f"- **{rt['label']}** — {rt['note']}")
+            st.caption("These are available from The Trademark Helpline — "
+                       "get in touch and we'll run them with you.")
+        elif not cr["classes"]:
             st.warning("No class data for this industry.")
         else:
             st.caption(f"Industry = SIC {', '.join(sics)} · {cr['total']:,} trademarks.")
             cls_df = pd.DataFrame([{
-                "Keep": c["band"] != "Rarely",
-                "Band": _BAND_EMOJI[c["band"]],
+                "Keep": c["tier"] != "d",
+                "Band": _chip(c),
                 "Class": c["class"],
                 "Heading": c["heading"],
                 "% of industry": c["pct"],
@@ -303,21 +370,28 @@ else:
             kept_class_nums = set(edited[edited["Keep"]]["Class"].tolist())
 
             st.subheader("Terms within kept classes")
-            st.caption("Open a class to review and untick terms.")
+            kept_ordered = [c for c in cr["classes"] if c["class"] in kept_class_nums]
+            review = st.multiselect(
+                "Review goods/services terms for which classes?",
+                options=[c["class"] for c in kept_ordered],
+                default=[c["class"] for c in kept_ordered if c["tier"] == "a"],
+                format_func=lambda n: f"Class {n}",
+                help="Only the classes you pick here load their term lists "
+                     "(keeps the page fast). Unpicked kept classes are saved at class level.")
             selection = []
-            for c in cr["classes"]:
-                if c["class"] not in kept_class_nums:
-                    continue
-                with st.expander(f"{_BAND_EMOJI[c['band']]} · Class {c['class']} — "
-                                 f"{c['heading']}  ({c['pct']}%)"):
-                    tr = c_term_rec(tuple(sics), c["class"])
+            for c in kept_ordered:
+                kept_terms = []
+                if c["class"] in review:
+                    st.markdown(f"**{_chip(c)} · Class {c['class']} — "
+                                f"{c['heading']}**  ({c['pct']}%)")
+                    with st.spinner(f"Loading class {c['class']} terms…"):
+                        tr = c_term_rec(tuple(sics), c["class"])
                     if not tr["terms"]:
                         st.write("_No terms found._")
-                        kept_terms = []
                     else:
                         tdf = pd.DataFrame([{
-                            "Keep": t["band"] != "Rarely",
-                            "Band": _BAND_EMOJI[t["band"]],
+                            "Keep": t["tier"] != "d",
+                            "Band": _chip(t),
                             "Term": t["term"],
                             "% of class": t["pct"],
                         } for t in tr["terms"]])
@@ -327,31 +401,36 @@ else:
                             column_config={"Keep": st.column_config.CheckboxColumn(required=True)},
                             disabled=["Band", "Term", "% of class"])
                         band_of = {t["term"]: t["band"] for t in tr["terms"]}
-                        kept_terms = [{"term": x, "band": band_of.get(x, "Rarely")}
+                        kept_terms = [{"term": x, "band": band_of.get(x, "")}
                                       for x in te[te["Keep"]]["Term"].tolist()]
                 selection.append({"class": c["class"], "heading": c["heading"],
                                   "band": c["band"], "pct": c["pct"], "terms": kept_terms})
 
-            # ── save ──
-            st.subheader("Save selection")
-            company_label = (sector_company or {}).get("name") or name
-            rec_html = br.render_recommendations(company_label, sics, selection)
-            fn = company_label.strip().replace(" ", "_")
-            st.download_button("⬇ Download branded recommendations (HTML)", rec_html,
-                               file_name=f"class_term_recommendations_{fn}.html",
-                               mime="text/html")
-            if audience == "Staff":
-                rows = []
-                for s in selection:
-                    if s["terms"]:
-                        for t in s["terms"]:
-                            rows.append({"Class": s["class"], "Heading": s["heading"],
-                                         "Class band": s["band"], "Term": t["term"],
-                                         "Term band": t["band"]})
-                    else:
-                        rows.append({"Class": s["class"], "Heading": s["heading"],
-                                     "Class band": s["band"], "Term": "", "Term band": ""})
-                csv = pd.DataFrame(rows).to_csv(index=False)
-                st.download_button("⬇ Download CSV (staff)", csv,
-                                   file_name=f"class_term_recommendations_{fn}.csv",
-                                   mime="text/csv")
+            # ── selection → branded sheet, offered in Downloads below ──
+            rec_html = br.render_recommendations(display_name, sics, selection)
+            st.caption(f"{len(selection)} class(es) kept — your tailored "
+                       "recommendation sheet is ready in Downloads below.")
+
+# ── downloads ────────────────────────────────────────────────────────
+st.divider()
+st.header("Downloads")
+# Top sector applicants' own marks (best-effort, for the report appendix).
+top_marks = {}
+if rep:
+    for tcomp in rep.get("top_companies", [])[:3]:
+        mk = da.company_marks(tcomp.get("company_number") or "")
+        if mk:
+            top_marks[tcomp.get("name")] = mk
+report_html = br.render(company_name=display_name, applicant=appl, marks=marks,
+                        sector_company=sector_company, sector=rep, benchmark=bench,
+                        risk=risk_res, top_applicant_marks=top_marks)
+fn = display_name.strip().replace(" ", "_")
+d1, d2 = st.columns(2)
+d1.download_button("⬇ Industry trademark report (HTML)", data=report_html,
+                   file_name=f"industry_report_{fn}.html", mime="text/html")
+if rec_html:
+    d2.download_button("⬇ Class & term recommendations (HTML)", data=rec_html,
+                       file_name=f"class_term_recommendations_{fn}.html",
+                       mime="text/html")
+st.caption("Print-ready — open the file and use your browser's "
+           "Print → Save as PDF.")

@@ -33,6 +33,52 @@ def _esc(x) -> str:
     return html.escape(str(x if x is not None else "—"))
 
 
+def _risk_block(risk) -> str:
+    """High/Medium/Low risk list — same rules and colours as the Audit
+    Report tool (risk.py vendors the Braudit rubric)."""
+    if not risk or not risk.get("marks"):
+        return ""
+    from risk import RISK_COLOUR, RISK_TEXT
+    counts = risk.get("counts", {})
+    cards = "".join(
+        f"<div class='card'><div class='big' style='color:{RISK_COLOUR.get(b, '#617383')}'>"
+        f"{counts.get(b, 0)}</div><div class='lbl'>{_esc(b)}</div></div>"
+        for b in ("High Risk", "Medium Risk", "Low Risk"))
+    rows = "".join(
+        f"<tr><td><span class='chip' style='background:{RISK_COLOUR.get(x['risk'], '#617383')};"
+        f"color:{RISK_TEXT.get(x['risk'], '#fff')}'>{_esc(x['risk'])}</span></td>"
+        f"<td>{_esc(x.get('verbal_element_text'))}</td>"
+        f"<td>{_esc(x.get('applicant_name'))}</td>"
+        f"<td>{_esc(x.get('status'))}</td>"
+        f"<td>{_esc(', '.join(str(c) for c in (x.get('classes') or [])))}</td></tr>"
+        for x in risk["marks"])
+    return f"""
+        <h2>Marks like yours on the register</h2>
+        <p class="muted">Banded by status, similarity to the brand name, mark type and
+           class overlap with the industry — the same rules as our Audit Report.</p>
+        <div class="cards">{cards}</div>
+        <table><thead><tr><th>Risk</th><th>Mark</th><th>Owner</th><th>Status</th>
+          <th>Classes</th></tr></thead><tbody>{rows}</tbody></table>
+    """
+
+
+def _top_applicants_block(top_applicant_marks) -> str:
+    """The sector's top trademark applicants and the marks they own."""
+    if not top_applicant_marks:
+        return ""
+    parts = []
+    for company, mk in top_applicant_marks.items():
+        rows = "".join(
+            f"<tr><td>{_esc(m.get('mark'))}</td><td>{_esc(m.get('status'))}</td></tr>"
+            for m in (mk or [])) or "<tr><td colspan=2 class='muted'>—</td></tr>"
+        parts.append(f"<h3>{_esc(company)}</h3>"
+                     f"<table><thead><tr><th>Mark</th><th>Status</th></tr></thead>"
+                     f"<tbody>{rows}</tbody></table>")
+    return ("<h2>What the sector leaders protect</h2>"
+            "<p class='muted'>The top trademark applicants in this sector and "
+            "the marks they own (up to 10 each).</p>" + "".join(parts))
+
+
 def _benchmark_block(benchmark) -> str:
     if not benchmark:
         return ""
@@ -66,8 +112,21 @@ def _benchmark_block(benchmark) -> str:
     """
 
 
-_BAND_COLOUR = {"Always": "#1D1D1B", "Often": "#2E7D32",
-                "Sometimes": "#E69500", "Rarely": "#C0392B"}
+# Band label -> colour, derived from the shared vocabulary so the report can't
+# drift from the engine. Old labels kept as aliases for any cached selections.
+import sys as _sys
+from pathlib import Path as _P
+_HERE = _P(__file__).resolve().parent
+if str(_HERE) not in _sys.path:
+    _sys.path.insert(0, str(_HERE))
+try:
+    from freesearch.bands import TIER_LABELS as _TL
+    _TIER_COLOUR = {"a": "#1D1D1B", "b": "#2E7D32", "c": "#E69500", "d": "#C0392B"}
+    _BAND_COLOUR = {_TL[k]: _TIER_COLOUR[k] for k in _TL}
+except Exception:
+    _BAND_COLOUR = {}
+_BAND_COLOUR.update({"Always": "#1D1D1B", "Often": "#2E7D32",   # legacy aliases
+                     "Sometimes": "#E69500", "Rarely": "#C0392B"})
 
 
 def render_recommendations(company_name, sics, selection) -> str:
@@ -118,9 +177,9 @@ def render_recommendations(company_name, sics, selection) -> str:
     <div class="meta">Class &amp; Term Recommendations<br>Generated {today}</div>
   </div>
   <h1>{_esc(company_name)}</h1>
-  <p class="legend">Industry: SIC {_esc(', '.join(sics or []))}. Frequency in this industry:
-     <b style="background:#1D1D1B">Always</b><b style="background:#2E7D32">Often</b>
-     <b style="background:#E69500">Sometimes</b><b style="background:#C0392B">Rarely</b></p>
+  <p class="legend">Industry: SIC {_esc(', '.join(sics or []))}. How many businesses like this protect each:
+     <b style="background:#1D1D1B">All use this</b><b style="background:#2E7D32">Most use this</b>
+     <b style="background:#E69500">Some use this</b><b style="background:#C0392B">A few have this</b></p>
   {body}
   <div class="foot">A starting point based on what this industry typically protects — not legal
      advice. Final class/term selection should be confirmed for the specific goods and services.<br>
@@ -129,7 +188,7 @@ def render_recommendations(company_name, sics, selection) -> str:
 
 
 def render(*, company_name, applicant, marks, sector_company=None, sector=None,
-           benchmark=None) -> str:
+           benchmark=None, risk=None, top_applicant_marks=None) -> str:
     logo = _logo_data_uri()
     today = dt.date.today().strftime("%d %B %Y")
 
@@ -197,6 +256,9 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
            padding:12px; text-align:center; }}
   .card .big {{ color:{PINK}; font-size: 24px; font-weight:700; }}
   .card .lbl {{ color:{SLATE}; font-size: 11px; }}
+  .chip {{ font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px;
+           white-space:nowrap; }}
+  table, .clsrow {{ page-break-inside: avoid; }}
   .foot {{ margin-top: 28px; color:{SLATE}; font-size: 10px;
            border-top:1px solid #eee; padding-top: 8px; }}
 </style></head><body>
@@ -212,7 +274,11 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
   <table><thead><tr><th>Application</th><th>Mark</th><th>Status</th><th>Expiry</th></tr></thead>
     <tbody>{marks_rows}</tbody></table>
 
+  {_risk_block(risk)}
+
   {sector_block}
+
+  {_top_applicants_block(top_applicant_marks)}
 
   {_benchmark_block(benchmark)}
 
