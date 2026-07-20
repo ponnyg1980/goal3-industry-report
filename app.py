@@ -848,6 +848,47 @@ if _kept_classes:
                + ", ".join(str(c) for c in _kept_classes) + ".")
 
 
+# ── marks like yours: risk overview (same rules as the Audit Report) ──
+risk_res = None
+_risk_subject = display_name          # trading name when in TN mode
+if da.query_runs_ready():
+    st.header("Marks like yours on the register")
+    st.caption("We compare your name against live UK register data using the "
+               "same rules as our paid Audit Report — status, similarity, "
+               "mark type and class overlap. This is what an examiner or an "
+               "opposing brand would see.")
+    with st.spinner("Checking the register for similar marks…"):
+        cand = c_similar(_risk_subject)
+    if not cand:
+        st.success("No similar marks found on the register — "
+                   "a good sign for your brand name.")
+    else:
+        tgt = []
+        if sics:
+            _cr = c_class_rec(tuple(sics))
+            tgt = [c["class"] for c in _cr.get("classes", [])
+                   if c.get("tier") in ("a", "b")]
+        risk_res = rk.assess(
+            cand, brand=_risk_subject, target_classes=tgt,
+            own_applicant_names=[appl.get("name") or "",
+                                 (sector_company or {}).get("name") or ""])
+        counts = risk_res["counts"]
+        r1, r2, r3 = st.columns(3)
+        r1.metric("🔴 High risk", counts.get("High Risk", 0))
+        r2.metric("🟠 Medium risk", counts.get("Medium Risk", 0))
+        r3.metric("🟢 Low risk", counts.get("Low Risk", 0))
+        st.dataframe(
+            [{"Risk": x["risk"], "Mark": x.get("verbal_element_text"),
+              "Owner": x.get("applicant_name"), "Status": x.get("status"),
+              "Type": x.get("mark_type"),
+              "Classes": ", ".join(str(c) for c in (x.get("classes") or []))}
+             for x in risk_res["marks"]],
+            use_container_width=True, hide_index=True)
+        st.caption("Banded with the same rules as our Audit Report: status, "
+                   "similarity to your name, mark type and overlap with the "
+                   "classes your industry registers in. Lapsed marks are "
+                   "excluded as negligible.")
+
 # ── Trademark Viability Score (item 4) ───────────────────────────────
 st.header("Trademark Viability Score")
 st.caption("One number, built from four things we can measure: how alone "
@@ -890,47 +931,6 @@ if _v["scores"]["distinctiveness"] < 45:
                "but logos, styling and evidence of use are all routes we use "
                "every week.")
 
-
-# ── marks like yours: risk overview (same rules as the Audit Report) ──
-risk_res = None
-_risk_subject = display_name          # trading name when in TN mode
-if da.query_runs_ready():
-    st.header("Marks like yours on the register")
-    st.caption("We compare your name against live UK register data using the "
-               "same rules as our paid Audit Report — status, similarity, "
-               "mark type and class overlap. This is what an examiner or an "
-               "opposing brand would see.")
-    with st.spinner("Checking the register for similar marks…"):
-        cand = c_similar(_risk_subject)
-    if not cand:
-        st.success("No similar marks found on the register — "
-                   "a good sign for your brand name.")
-    else:
-        tgt = []
-        if sics:
-            _cr = c_class_rec(tuple(sics))
-            tgt = [c["class"] for c in _cr.get("classes", [])
-                   if c.get("tier") in ("a", "b")]
-        risk_res = rk.assess(
-            cand, brand=_risk_subject, target_classes=tgt,
-            own_applicant_names=[appl.get("name") or "",
-                                 (sector_company or {}).get("name") or ""])
-        counts = risk_res["counts"]
-        r1, r2, r3 = st.columns(3)
-        r1.metric("🔴 High risk", counts.get("High Risk", 0))
-        r2.metric("🟠 Medium risk", counts.get("Medium Risk", 0))
-        r3.metric("🟢 Low risk", counts.get("Low Risk", 0))
-        st.dataframe(
-            [{"Risk": x["risk"], "Mark": x.get("verbal_element_text"),
-              "Owner": x.get("applicant_name"), "Status": x.get("status"),
-              "Type": x.get("mark_type"),
-              "Classes": ", ".join(str(c) for c in (x.get("classes") or []))}
-             for x in risk_res["marks"]],
-            use_container_width=True, hide_index=True)
-        st.caption("Banded with the same rules as our Audit Report: status, "
-                   "similarity to your name, mark type and overlap with the "
-                   "classes your industry registers in. Lapsed marks are "
-                   "excluded as negligible.")
 
 # ── sector intelligence (Temmy / Query Runs) ─────────────────────────
 st.header("Sector intelligence")
