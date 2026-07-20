@@ -58,20 +58,28 @@ NUGGETS = [
      "application success rate was 98%."),
 ]
 
-# seconds each card is held on screen
-DWELL = 4.5
+# Seconds each card is held. Tuned so a set of 4 lasts ~20s — long enough to
+# read, short enough that nobody watches the set loop. Jonathan (20 Jul):
+# "I would not scroll through between build screen and reveal, maybe do 3 or
+# 4 max dependent how long that takes."
+DWELL = 5.0
+
+# The build happens twice, so the cards are split — nobody sees a repeat.
+SET_ONE = NUGGETS[:4]      # while we read the register and the sector
+SET_TWO = NUGGETS[4:]      # while we tailor the report to their answers
 
 
-def carousel_html(*, brand_pink: str = '#E51652',
+def carousel_html(cards=None, *, brand_pink: str = '#E51652',
                   brand_navy: str = '#2D455A',
                   brand_slate: str = '#617383',
                   message: str = 'Building your report…') -> str:
-    """CSS-only rotating cards. Total cycle = len(NUGGETS) * DWELL."""
-    n = len(NUGGETS)
+    """CSS-only rotating cards. Total cycle = len(cards) * DWELL."""
+    NUGGETS_ = cards if cards is not None else NUGGETS
+    n = len(NUGGETS_)
     total = n * DWELL
     # each card: fade in, hold, fade out, then stay hidden for the rest
     frames = []
-    for i, (title, body) in enumerate(NUGGETS):
+    for i, (title, body) in enumerate(NUGGETS_):
         start = (i / n) * 100
         fade = 1.2 / total * 100          # ~1.2s fade
         hold_end = start + (100 / n) - fade
@@ -82,9 +90,9 @@ def carousel_html(*, brand_pink: str = '#E51652',
   {max(hold_end, 0):.3f}%          {{ opacity:1; transform:translateY(0); }}
   {min(hold_end + fade, 100):.3f}%, 100% {{ opacity:0; transform:translateY(-8px); }}
 }}""")
-    cards = []
-    for i, (title, body) in enumerate(NUGGETS):
-        cards.append(f"""
+    out = []
+    for i, (title, body) in enumerate(NUGGETS_):
+        out.append(f"""
   <div class="nug" style="animation:nug{i} {total}s ease-in-out infinite">
     <div class="eyebrow">Did you know…</div>
     <h3>{title}</h3>
@@ -94,7 +102,7 @@ def carousel_html(*, brand_pink: str = '#E51652',
 <div class="nugwrap">
   <div class="loader"><span></span><span></span><span></span></div>
   <div class="loadmsg">{message}</div>
-  <div class="nugstage">{''.join(cards)}</div>
+  <div class="nugstage">{''.join(out)}</div>
 </div>
 <style>
 .nugwrap {{ text-align:center; padding:26px 10px 34px; font-family:inherit; }}
