@@ -194,8 +194,68 @@ def render_recommendations(company_name, sics, selection) -> str:
 </body></html>"""
 
 
+def _viability_block(viability) -> str:
+    """The Trademark Viability dials, as static CSS (no JS at print time)."""
+    if not viability:
+        return ""
+    try:
+        import viability as vb
+        return ("<h2>Trademark Viability</h2>"
+                "<p class='muted'>Your brand strengths, less the pressure from "
+                "conflicting marks on the register.</p>"
+                + vb.gauge_html(viability))
+    except Exception:
+        return ""
+
+
+def _selection_block(selection) -> str:
+    """The classes and terms THEY chose — the tailored heart of the report."""
+    if not selection:
+        return ("<h2>Your classes &amp; terms</h2><p class='muted'>You chose to "
+                "cover classes at the audit rather than now — we'll go through "
+                "them with you then.</p>")
+    rows = []
+    for sset in selection:
+        ccol = _BAND_COLOUR.get(sset.get("band"), "#1D1D1B")
+        terms = " ".join(
+            f"<span class='term'>{_esc(t.get('term'))}</span>"
+            for t in (sset.get("terms") or [])) or \
+            "<span class='muted'>class kept; terms not itemised</span>"
+        rows.append(
+            f"<div class='clsrow'><div class='clshdr' style='color:{ccol}'>"
+            f"<span class='band' style='background:{ccol}'>"
+            f"{_esc(sset.get('band'))}</span> Class {_esc(sset.get('class'))} — "
+            f"{_esc(sset.get('heading'))}</div>"
+            f"<div class='terms'>{terms}</div></div>")
+    return ("<h2>Your classes &amp; terms</h2>"
+            "<p class='muted'>The classes and goods/services you selected. Your "
+            "registration only protects what you list here.</p>" + "".join(rows))
+
+
+def _assessment_block(assessment) -> str:
+    """What their three answers mean — the copy they were shown on screen."""
+    if not assessment:
+        return ""
+    import re as _re
+    body = assessment.get("body_md", "")
+    body = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", body)
+    parts = []
+    for para in body.split("\n\n"):
+        para = para.strip()
+        if not para:
+            continue
+        if para.startswith("- "):
+            items = "".join(f"<li>{ln[2:].strip()}</li>"
+                            for ln in para.split("\n") if ln.strip().startswith("- "))
+            parts.append(f"<ul>{items}</ul>")
+        else:
+            parts.append(f"<p>{para}</p>")
+    return (f"<h2>{_esc(assessment.get('title',''))}</h2>" + "".join(parts))
+
+
 def render(*, company_name, applicant, marks, sector_company=None, sector=None,
-           benchmark=None, risk=None, top_applicant_marks=None) -> str:
+           benchmark=None, risk=None, top_applicant_marks=None,
+           viability=None, selection=None, assessment=None) -> str:
     logo = _logo_data_uri()
     today = dt.date.today().strftime("%d %B %Y")
 
@@ -285,7 +345,10 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
   <table><thead><tr><th>Application</th><th>Mark</th><th>Status</th><th>Expiry</th></tr></thead>
     <tbody>{marks_rows}</tbody></table>
 
+  {_viability_block(viability)}
   {_risk_block(risk)}
+  {_selection_block(selection)}
+  {_assessment_block(assessment)}
 
   {sector_block}
 
