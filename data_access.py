@@ -184,6 +184,57 @@ def _sector_sql(sic: str) -> dict:
     }
 
 
+def _sanitise_phrase(s: str) -> str:
+    """Safe chars only, then SQL-escape quotes (only ever used inside an
+    ILIKE literal) — same approach as freesearch/queryruns.py."""
+    s = re.sub(r"[^A-Za-z0-9 \-]", "", str(s or "")).strip()
+    return s.replace("'", "''")
+
+
+def similar_marks(brand: str, *, limit: int = 300):
+    """Candidate register marks whose verbal element could conflict with
+    `brand`: contains-match plus a prefix stem for fuzzy variants
+    (MOMENT% catches MOMENTUM/MOMENTOUS). Scored/banded by risk.py."""
+    b = _sanitise_phrase(brand)
+    if not b:
+        return []
+    stem = b[:5] if len(b) >= 5 else b
+    conds = f"m.verbal_element_text ILIKE '%{b}%' OR m.verbal_element_text ILIKE '{stem}%'"
+    sql = f"""
+SELECT t.application_number, t.status, m.verbal_element_text,
+       m.feature AS mark_type,
+       array_agg(DISTINCT nc.number) FILTER (WHERE nc.number IS NOT NULL) AS classes,
+       (array_agg(DISTINCT a.name))[1] AS applicant_name
+FROM marks m
+JOIN trademarks t ON t.id = m.trademark_id
+LEFT JOIN nice_class_trademarks nct ON nct.trademark_id = t.id
+LEFT JOIN nice_classes nc ON nc.id = nct.nice_class_id
+LEFT JOIN applicant_trademarks apt ON apt.trademark_id = t.id
+LEFT JOIN applicants a ON a.id = apt.applicant_id
+WHERE ({conds})
+GROUP BY t.application_number, t.status, m.verbal_element_text, m.feature
+LIMIT {int(limit)}
+""".strip()
+    return run_sql(sql)
+
+
+def company_marks(company_number: str, *, limit: int = 10):
+    """Marks held by a company (by CH number) — used for the report's
+    'what the sector leaders protect' appendix. REST applicant search
+    misses many legal names; the SQL join by company_number doesn't."""
+    n = re.sub(r"[^0-9A-Za-z]", "", str(company_number))
+    if not n:
+        return []
+    return run_sql(
+        "SELECT mk.verbal_element_text AS mark, t.status "
+        "FROM applicants a "
+        "JOIN applicant_trademarks apt ON apt.applicant_id = a.id AND apt.active "
+        "JOIN trademarks t ON t.id = apt.trademark_id "
+        "JOIN marks mk ON mk.trademark_id = t.id "
+        f"WHERE a.company_number = '{n}' "
+        f"ORDER BY t.status LIMIT {int(limit)}")
+
+
 def company_sic(company_number: str):
     """Resolve a company's SIC codes from Temmy (97% coverage)."""
     n = re.sub(r"[^0-9A-Za-z]", "", str(company_number))
