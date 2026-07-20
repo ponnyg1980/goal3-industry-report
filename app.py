@@ -1075,6 +1075,11 @@ import assessment as asmt
 
 st.divider()
 st.header("What your answers tell us")
+_res, _copy = None, None
+if q1_idx is None or q3_idx is None:
+    st.info("You skipped the three questions, so this part is blank. "
+            "Answer them and we'll tell you honestly whether your situation "
+            "needs professional help — including if it doesn't.")
 if q1_idx is not None and q3_idx is not None:
     _res = asmt.score(q1_idx, q2_flags, q2_none, q3_idx)
     _copy = asmt.result_copy(_res, n_similar=_n_sim)
@@ -1176,9 +1181,15 @@ if rep:
         mk = da.company_marks(tcomp.get("company_number") or "")
         if mk:
             top_marks[tcomp.get("name")] = mk
+# The download is the report they just read — so it carries the tailored
+# parts too: their viability dials, the classes/terms THEY chose, and what
+# their three answers mean. Without these it was only the industry picture.
 report_html = br.render(company_name=display_name, applicant=appl, marks=marks,
                         sector_company=sector_company, sector=rep, benchmark=bench,
-                        risk=risk_res, top_applicant_marks=top_marks)
+                        risk=risk_res, top_applicant_marks=top_marks,
+                        viability=_v if "_v" in dir() else None,
+                        selection=_selection,
+                        assessment=_copy if "_copy" in dir() else None)
 fn = display_name.strip().replace(" ", "_")
 d1, d2 = st.columns(2)
 d1.download_button("⬇ Industry trademark report (HTML)", data=report_html,
