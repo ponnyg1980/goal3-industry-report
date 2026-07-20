@@ -338,11 +338,10 @@ if da.query_runs_ready():
 
 # ── Trademark Viability Score (item 4) ───────────────────────────────
 st.header("Trademark Viability Score")
-st.caption("One honest number, built from four things we can measure: how "
-           "alone your name is, how serious the similar marks are, how "
-           "protectable the wording is in law, and how long you've used it. "
-           "We never score below 50% overall — there is always a route — "
-           "the dials show where the work is.")
+st.caption("One number, built from four things we can measure: how alone "
+           "your name is on the register, how protectable the wording is in "
+           "law, how long you've used it, and how hard the similar marks "
+           "push back. The dials show where the work is.")
 import viability as vb
 _c = (risk_res or {}).get("counts", {})
 _sector_terms = []

@@ -15,10 +15,11 @@ Four indicators, each 0–100, shown as radial gauges, plus a master score.
                     the stated trading-name years). Use builds unregistered
                     rights and answers "when did you start?".
 
-MASTER: weighted blend, floored at 50 — deliberately. Below-50 theatre
-serves nobody: there is always a route (evidence, narrowing, a rework of a
-descriptive element), so the floor encodes "this is fixable" while the
-gauges show honestly WHERE the work is.
+MASTER: the three strengths set the ceiling; conflict pressure drags it
+down. A floor applies (see MASTER_FLOOR) because there is always a route —
+evidence, narrowing the specification, restyling a descriptive element. The
+floor is deliberately NOT stated in client-facing copy: a published floor
+reads as rigged, and the dials already show honestly where the work is.
 
 The gauges are pure HTML/CSS (conic-gradient) — no charting dependency, so
 the container stays slim and the same markup can go into the branded PDF.
@@ -35,7 +36,12 @@ from datetime import date
 STRENGTH_WEIGHTS = {'uniqueness': 0.35, 'distinctiveness': 0.40,
                     'proof_of_use': 0.25}
 CONFLICT_DRAG = 0.40          # how hard conflict pressure pulls the master down
-MASTER_FLOOR = 50
+# Floor: the master never prints below this. Rationale unchanged — there is
+# always a route (evidence, narrowing, restyling a descriptive element) — but
+# the number is NOT disclosed in client-facing copy: publishing the floor
+# invites "so it's rigged", and a visible ceiling on bad news reads as spin.
+# Internal only.
+MASTER_FLOOR = 41
 
 # Ordinary trade language that weakens a mark. Deliberately generic-only —
 # sector-specific descriptive terms come in via `sector_terms` at call time
@@ -181,8 +187,8 @@ def gauge_html(result: dict, *, brand_hex: str = '#1D1D1B') -> str:
       <div class="hole"><span>{m}%</span></div>
     </div>
     <b>Trademark Viability</b>
-    <small>Strengths minus conflict drag — never below {MASTER_FLOOR}%,
-    because there is always a route.</small>
+    <small>Your brand strengths, less the pressure from conflicting
+    marks.</small>
   </div>
   <div class="vgroup pos">
     <div class="vgh">Brand strengths</div>
