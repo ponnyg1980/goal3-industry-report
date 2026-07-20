@@ -21,6 +21,7 @@ import companies_house as ch
 import branded_report as br
 import recommend as rec
 import risk as rk
+import resolve as rsv
 
 
 # ── cached data calls (Streamlit re-runs the whole script per click) ──
@@ -73,6 +74,18 @@ def c_benchmark(number, sics_tuple):
 @st.cache_data(ttl=1800, show_spinner=False)
 def c_ch_search(name):
     return ch.search(name, limit=10)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_find(name):
+    """Companies House AND the trademark register, merged (resolve.find)."""
+    return rsv.find(name, limit=10)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_owner_marks(key, number, iids):
+    return rsv.marks_for({"company_number": number,
+                          "ipo_identifiers": list(iids)}, limit=200)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -166,32 +179,64 @@ if _stage == "input":
         st.session_state["query"] = _name.strip()
 
     _q = st.session_state.get("query", "")
-    _chosen = None
+    _chosen, _cand = None, None
     if _q:
-        if ch.ready():
-            _hits = c_ch_search(_q)
-            if not _hits:
-                st.warning("We couldn't find a company with that name — check "
-                           "the spelling, or try the full registered name.")
-            else:
-                _labels = [f"{h['title']} — {h['company_number']} "
-                           f"({h.get('status','')})" for h in _hits]
-                _i = st.selectbox("Select your company", range(len(_hits)),
-                                  format_func=lambda i: _labels[i])
-                _chosen = _hits[_i]["company_number"]
+        # Ask BOTH registers. Companies House knows who exists; Temmy knows
+        # who owns trademarks — and neither is a superset of the other.
+        with st.spinner("Checking Companies House and the trademark register…"):
+            _hits = c_find(_q)
+        if not _hits:
+            # Scenario 3: on neither. Nothing to anchor a report to, so send
+            # them down the trading-name route rather than a dead end.
+            st.warning(
+                "We couldn't find that on Companies House **or** the "
+                "trademark register. Check the spelling, or try the full "
+                "registered name.")
+            st.info("Trading under a name that isn't a registered company? "
+                    "That's common and still protectable — switch on "
+                    "**Trading Name Mode** below and we'll build the report "
+                    "around the name itself.")
         else:
-            st.error("Companies House lookup is unavailable right now.")
+            _i = st.selectbox("Select your company", range(len(_hits)),
+                              format_func=lambda i: rsv.label(_hits[i]))
+            _cand = _hits[_i]
+            _chosen = _cand.get("company_number")
+            _sc = _cand.get("scenario")
+            if _sc == "both":
+                st.success(
+                    f"**{_cand['display_name']}** holds "
+                    f"**{_cand['n_marks']}** trademark"
+                    f"{'s' if _cand['n_marks'] != 1 else ''} on the UK "
+                    "register. We'll show you every one of them.")
+            elif _sc == "ch_only":
+                st.info(
+                    f"**{_cand['display_name']}** is on Companies House but "
+                    "owns **no UK trademarks** that we can find. The rest of "
+                    "the report still works — and that gap is the point of it.")
+            else:      # register_only
+                st.info(
+                    f"**{_cand['display_name']}** owns **{_cand['n_marks']}** "
+                    "UK trademark"
+                    f"{'s' if _cand['n_marks'] != 1 else ''} but isn't a UK "
+                    "registered company under that name — an overseas owner, "
+                    "a partnership or an individual. We'll build the report "
+                    "from the marks themselves.")
 
     _tn, _tny, _same, _type = "", None, True, None
-    if _chosen:
-        with st.expander("Do you trade under a different name?"):
+    # Open the panel whenever they've searched: scenario 3 (found nowhere)
+    # and scenario 4 (register only, no CH number) both NEED this route, and
+    # both previously hit a dead end because the gate was `if _chosen`.
+    _tn_forced = bool(_q) and _cand is None
+    if _q:
+        with st.expander("Do you trade under a different name?",
+                         expanded=_tn_forced):
             st.markdown(
                 "This report is based on your **registered company name**. If "
                 "your customers know you by something else — a brand over the "
                 "door, on your website, on your invoices — that trading name "
                 "is what needs protecting. Switch it on and we'll run the "
                 "report on that instead.")
-            if st.toggle("Use Trading Name Mode"):
+            if st.toggle("Use Trading Name Mode", value=_tn_forced):
                 _tn = st.text_input("Your trading name")
                 _same = st.radio("Same sector and industry as your company?",
                                  ["Yes", "No"], horizontal=True,
@@ -209,9 +254,18 @@ if _stage == "input":
                          "strengthens an application.")
 
         st.divider()
+        _ready = bool(_chosen) or bool(_cand) or bool(_tn.strip())
+        if not _ready and _q:
+            st.caption("Pick a company above, or give us a trading name, "
+                       "and we'll build the report.")
         if st.button("See how my industry protects itself →", type="primary",
-                     use_container_width=True):
+                     use_container_width=True, disabled=not _ready):
             st.session_state.update(
+                candidate=_cand,
+                owner_name=(_cand or {}).get("display_name"),
+                owner_marks_n=(_cand or {}).get("n_marks", 0),
+                owner_iids=(_cand or {}).get("ipo_identifiers", []),
+                scenario=(_cand or {}).get("scenario"),
                 company_number=_chosen, trading_name=_tn.strip(),
                 trading_years=_tny or None, tn_same_sector=_same,
                 tn_type=_type, stage="build1")
@@ -362,12 +416,48 @@ if trading_name.strip():
 # picture of their industry. It earns the right to ask for their answers.
 # ══════════════════════════════════════════════════════════════════════
 if _stage == "sector":
-    # ── company summary ──────────────────────────────────────────────────
+    # ── who we found, and what they own ──────────────────────────────────
+    # The applicant name and portfolio size lead, because that is the fact
+    # the visitor can immediately check against what they know — and the
+    # marks open the same way the sector leaders' do.
+    _cand_ss = st.session_state.get("candidate") or {}
+    _owner = (st.session_state.get("owner_name")
+              or (sector_company or {}).get("name")
+              or appl.get("name") or "—")
+    _n_own = int(st.session_state.get("owner_marks_n") or 0)
+    _scen = st.session_state.get("scenario")
+
+    st.subheader(_owner)
     m1, m2, m3 = st.columns(3)
-    m1.metric("Trademarks found", len(marks))
-    m2.metric("Company", (sector_company or {}).get("name", appl.get("name", "—")))
-    m3.metric("Company no.", (sector_company or {}).get("number", "—"))
-    if marks:
+    m1.metric("Trademarks held", _n_own or len(marks))
+    m2.metric("Company no.",
+              (_cand_ss.get("company_number")
+               or (sector_company or {}).get("number") or "—"))
+    m3.metric("On the register", "Yes" if _scen != "ch_only" else "No")
+
+    if _scen == "ch_only":
+        st.info("We found no UK trademarks in this company's name. That isn't "
+                "a fault in the data — most UK companies own none. What "
+                "follows is what companies like yours *do* protect.")
+    elif _scen == "register_only":
+        st.caption("Matched on the trademark register rather than Companies "
+                   "House — an overseas owner, a partnership or an individual.")
+
+    if _n_own:
+        with st.expander(f"View {_n_own} trademark"
+                         f"{'s' if _n_own != 1 else ''} held by {_owner}"):
+            _own_rows = c_owner_marks(_cand_ss.get("key") or _owner,
+                                      _cand_ss.get("company_number"),
+                                      tuple(st.session_state.get("owner_iids") or []))
+            if _own_rows:
+                st.dataframe(
+                    [{"Mark": r.get("mark"), "Status": r.get("status"),
+                      "Application": r.get("application_number"),
+                      "Expires": r.get("expires")} for r in _own_rows],
+                    use_container_width=True, hide_index=True)
+            else:
+                st.caption("We couldn't retrieve the individual marks just now.")
+    elif marks:
         st.subheader("Marks held")
         st.dataframe(
             [{"Application": m.get("application_number"),
