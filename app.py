@@ -399,25 +399,33 @@ else:
                "your sector hold trademarks, that's the market telling you "
                "what it takes to compete — see their actual marks below.")
     st.dataframe(rep.get("top_companies", []), use_container_width=True, hide_index=True)
-    # item 6 — proof, not assertion: show each leader's actual trademarks
+    # item 6 — proof, not assertion: show each leader's actual trademarks.
+    # Look up by COMPANY NUMBER via SQL, not by name via mark-text search:
+    # data_access.company_marks says it plainly — "REST applicant search
+    # misses many legal names; the SQL join by company_number doesn't".
     for _tc in (rep.get("top_companies") or [])[:3]:
-        _tc_name = _tc.get("company") or _tc.get("name") or ""
+        _tc_name = _tc.get("name") or ""
+        _tc_num = _tc.get("company_number") or ""
+        _tc_count = _tc.get("trademarks")
         if not _tc_name:
             continue
-        with st.expander(f"View trademarks — {_tc_name}"):
-            _treg = _reg_lookup(_tc_name)
-            if not _treg:
-                st.write("_No marks found under this exact name (they may "
-                         "file through a group company)._")
+        with st.expander(f"View trademarks — {_tc_name}"
+                         + (f" ({_tc_count})" if _tc_count else "")):
+            _tm = da.company_marks(_tc_num, limit=500) if _tc_num else []
+            if not _tm:
+                # Some groups file under an applicant record with no company
+                # number attached — fall back to the name search.
+                _alt = _reg_lookup(_tc_name)
+                _tm = [{"mark": (t.get("mark") or {}).get("verbal_element_text"),
+                        "status": t.get("status")}
+                       for t in (_alt[0]["trademarks"] if _alt else [])]
+            if not _tm:
+                st.write("_Their marks are filed under a different legal "
+                         "entity, so we can't list them here._")
             else:
-                st.dataframe(
-                    [{"Mark": (t.get("mark") or {}).get("verbal_element_text")
-                              or t.get("application_number"),
-                      "Number": t.get("application_number"),
-                      "Status": t.get("status"),
-                      "Expiry": t.get("expiry_date")}
-                     for t in _treg[0]["trademarks"][:40]],
-                    use_container_width=True, hide_index=True)
+                st.caption(f"{len(_tm)} marks on the register.")
+                st.dataframe(_tm, use_container_width=True, hide_index=True)
+
     st.subheader("Class distribution")
 
     def _cls_label(n):
@@ -593,14 +601,16 @@ else:
                 "Keep": c["tier"] != "d",
                 "Band": _chip(c),
                 "Class": c["class"],
-                "Heading": c["heading"],
+                "What it covers": c.get("class_label") or "",
+                "Official description": c["heading"],
                 "% of industry": c["pct"],
                 "Trademarks": c["trademarks"],
             } for c in cr["classes"]])
             edited = st.data_editor(
                 cls_df, hide_index=True, use_container_width=True, key="cls_editor",
                 column_config={"Keep": st.column_config.CheckboxColumn(required=True)},
-                disabled=["Band", "Class", "Heading", "% of industry", "Trademarks"])
+                disabled=["Band", "Class", "What it covers",
+                          "Official description", "% of industry", "Trademarks"])
             kept_class_nums = set(edited[edited["Keep"]]["Class"].tolist())
 
             # item 8 — a one-class sector needs saying out loud, or the page
@@ -624,7 +634,9 @@ else:
                 "Review goods/services terms for which classes?",
                 options=[c["class"] for c in kept_ordered],
                 default=[c["class"] for c in kept_ordered if c["tier"] == "a"],
-                format_func=lambda n: f"Class {n}",
+                format_func=lambda n: f"Class {n} — "
+                    + next((c.get("class_label") or c["heading"][:48]
+                            for c in kept_ordered if c["class"] == n), ""),
                 help="Only the classes you pick here load their term lists "
                      "(keeps the page fast). Unpicked kept classes are saved at class level.")
             selection = []

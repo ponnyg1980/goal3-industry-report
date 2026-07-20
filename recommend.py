@@ -72,6 +72,52 @@ def _row(c: dict) -> dict:
     }
 
 
+def ensure_seeded(sics, *, with_terms: bool = True) -> bool:
+    """Seed any SIC we hold no filing data for, live, on first use.
+
+    The seed shipped with 170 SICs — the ones our taxonomy references. But a
+    visitor's company can carry ANY of the ~700 SIC codes (Technical Fibre
+    Products is 32990, "other manufacturing n.e.c."), and for those we were
+    falling back to the hand-built concordance: generic division-level classes
+    and NO terms. That's the wrong answer dressed as an answer.
+
+    So: if a SIC isn't seeded, seed it now from the register (~4s for classes,
+    a few seconds more for terms) and write it into the seed file. Every later
+    visitor with that SIC gets it instantly.
+
+    Returns True if anything new was seeded.
+    """
+    import os
+    from freesearch import sic_seed as _ss
+    seed = _ss.load_seed()
+    missing = [str(c).strip() for c in (sics or [])
+               if str(c).strip() and not (seed.get(str(c).strip()) or {}).get('classes')]
+    if not missing:
+        return False
+    base = (os.environ.get('TEMMY_API_BASE_URL') or '').strip()
+    key = (os.environ.get('TEMMY_QUERY_RUNS_API_KEY') or '').strip()
+    if not (base and key):
+        return False
+    changed = False
+    for sic in missing:
+        try:
+            rec = _ss.sic_frequencies(sic, base=base, key=key,
+                                      with_terms=with_terms)
+        except Exception:
+            continue
+        # MIN_MARKS guards against banding noise; below it there is genuinely
+        # too little data and the concordance fallback is the honest answer.
+        if rec.get('classes'):
+            seed[sic] = rec
+            changed = True
+    if changed:
+        try:
+            _ss._write_json(_ss.SEED_JSON, seed)
+        except Exception:
+            pass          # read-only FS: still fine, we return the data below
+    return changed
+
+
 def class_recommendations(sics) -> dict:
     """Per Nice class for the company's SIC(s), banded, from the shared engine.
 
@@ -80,6 +126,11 @@ def class_recommendations(sics) -> dict:
     to the competitor-mark / website / description tools instead of guessing.
     """
     m = map_sic_codes(sics)
+    # No filing data for this SIC? Seed it live, then ask again — better a
+    # few seconds' wait than confidently wrong classes from a heuristic.
+    if not m.get('inconclusive') and m.get('method') == 'concordance':
+        if ensure_seeded(sics):
+            m = map_sic_codes(sics)
     if m.get('inconclusive'):
         return {'total': 0, 'classes': [], 'inconclusive': True,
                 'message': m.get('message'), 'routes': m.get('routes', []),
