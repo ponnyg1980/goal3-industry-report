@@ -386,6 +386,7 @@ marks = []
 sics = []
 sector_company = None
 rec_html = None
+sics_from_type = False        # True when the SIC came from the business type
 
 
 def _reg_lookup(*names):
@@ -434,7 +435,13 @@ else:
                  or query or "Your brand")
     sector_company = {"name": _owner_nm,
                       "number": _cand_pre.get("company_number")}
-    sics = []
+    # A business type is not a substitute for a SIC — it OWNS one. The
+    # taxonomy maps 'Solicitor or law firm' to SIC 69102 (1,691 marks, 848
+    # companies), so borrowing it gives the full sector view rather than the
+    # "no sector information" dead end a trading style used to hit.
+    _bt_sics = st.session_state.get("tn_type")
+    sics = [str(c) for c in (rec.type_sics(_bt_sics) or [])] if _bt_sics else []
+    sics_from_type = bool(sics)
     _iids = _cand_pre.get("ipo_identifiers") or []
     appl = {"name": _owner_nm,
             "ipo_identifier": _iids[0] if _iids else None}
@@ -501,7 +508,11 @@ if _stage == "sector":
     m2.metric("Company no.",
               (_cand_ss.get("company_number")
                or (sector_company or {}).get("number") or "—"))
-    m3.metric("On the register", "Yes" if _scen != "ch_only" else "No")
+    # Was `_scen != "ch_only"`, which said "Yes" for a trading style with no
+    # candidate at all (_scen is None). The honest answer is simply whether
+    # we found any marks in this name.
+    m3.metric("On the register",
+              "Yes" if (_n_own or marks) else "No")
 
     if _scen == "ch_only":
         st.info("We found no UK trademarks in this company's name. That isn't "
@@ -545,9 +556,15 @@ if _stage == "sector":
     if not da.query_runs_ready():
         st.info("🔒 Add `TEMMY_QUERY_RUNS_API_KEY` to activate sector intelligence.")
     elif not sics:
-        st.warning("No SIC codes available for this company, so no sector view.")
+        st.warning("We don't have an industry for this name yet — tell us the "
+                   "business type and the whole sector view opens up.")
     else:
-        if sector_company:
+        if sics_from_type:
+            st.caption(f"Sector basis: **{st.session_state.get('tn_type')}** — "
+                       f"the business type you gave us (SIC {', '.join(sics)}). "
+                       f"There's no Companies House record behind this name, so "
+                       f"this is the industry you told us you're in.")
+        elif sector_company:
             st.caption(f"Matched company: **{sector_company.get('name')}** "
                        f"(no. {sector_company.get('number','—')}) · SIC {', '.join(sics)}")
         sic = st.selectbox("Sector (SIC code)", sics)
@@ -604,7 +621,7 @@ if _stage == "sector":
 
     # ── benchmarking: company vs industry vs all-industry MEAN ───────────
     bench = None
-    if da.query_runs_ready() and sics and sector_company:
+    if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
         st.header("How they compare")
         st.caption("Your company against your sector's norms: how common "
                    "protection is, how much the protected hold, and at what "
@@ -1167,7 +1184,7 @@ else:
 
 # ── benchmarking: company vs industry vs all-industry MEAN ───────────
 bench = None
-if da.query_runs_ready() and sics and sector_company:
+if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
     st.header("How they compare")
     st.caption("Your company against your sector's norms: how common "
                "protection is, how much the protected hold, and at what "
