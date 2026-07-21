@@ -107,7 +107,15 @@ bk.install(st)
 
 
 def bd(markup: str):
-    """Render scoped, styled HTML."""
+    """Render scoped, styled HTML.
+
+    The blank-line strip is load-bearing, not tidiness: st.markdown parses
+    its input as Markdown first, and a raw-HTML block ENDS at the first
+    blank line — everything after it gets rendered as literal text. Any
+    component with a blank line in its template would half-render. Collapse
+    them and the parser has nothing to trip on.
+    """
+    markup = " ".join(ln for ln in markup.splitlines() if ln.strip())
     st.markdown(f'<div class="bd">{markup}</div>', unsafe_allow_html=True)
 
 
