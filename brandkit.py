@@ -174,3 +174,38 @@ def urgency_block() -> str:
       If someone else files it first, they get the rights &mdash; not you.</p>
   </div>
 </div>"""
+
+
+def class_rows(selection) -> str:
+    """The chosen classes as `.class-row` cards.
+
+    Deliberately a READ-ONLY view. The picking itself stays in
+    `st.data_editor` — tick boxes are the one place in the report where the
+    visitor does real work, and a static HTML table can't be ticked. So the
+    design language arrives where it costs nothing: on the confirmed
+    selection, in Reveal 2 and in the printed report.
+    """
+    if not selection:
+        return ""
+    _TIER_OF = {}
+    rows = []
+    for sset in selection:
+        tier = (sset.get("tier")
+                or _TIER_OF.get(sset.get("band"), "d"))
+        terms = (sset.get("terms") or [])
+        term_html = " ".join(
+            f'<span class="chip" style="background:var(--hairline-2);'
+            f'color:var(--brand-navy)">{esc(t.get("term"))}</span>'
+            for t in terms[:8])
+        more = (f'<span class="muted" style="font-size:11px">'
+                f'+{len(terms) - 8} more</span>' if len(terms) > 8 else "")
+        pct = sset.get("pct")
+        rows.append(
+            f'<div class="class-row keep">'
+            f'<div class="body">'
+            f'<div class="title">Class {esc(sset.get("class"))} &mdash; '
+            f'{esc(sset.get("heading"))}</div>'
+            f'<div class="sub">{band_chip(tier, sset.get("band") or "")} '
+            f'{term_html} {more}</div></div>'
+            f'<div class="pct">{esc(pct)}%</div></div>')
+    return "".join(rows)
