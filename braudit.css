@@ -1,0 +1,397 @@
+/* =========================================================================
+   braudit.css  —  The Trademark Helpline · Braudit report suite
+   -------------------------------------------------------------------------
+   One stylesheet for all three surfaces:
+     A. Streamlit report (inject the CSS via st.markdown(..., unsafe_allow_html=True))
+     B. Branded PDF / HTML report (print-to-PDF, A4)
+     C. Free Search wizard (scoped, embeddable)
+
+   Plain CSS. No preprocessor, no build step, no framework.
+   Token names map 1:1 to brand_tokens.py (BRAND_PINK -> --brand-pink, etc.)
+
+   HOW TO SCOPE IN STREAMLIT
+   -------------------------
+   Streamlit gives you "a vertical column of blocks". Wrap your injected HTML
+   in <div class="bd">…</div> and every component class below is namespaced
+   under .bd so it can't leak into Streamlit's own chrome. Native widgets
+   (radio, checkbox, data_editor) are styled via the .bd :is(...) hooks at the
+   foot of this file — adjust selectors to the Streamlit version if they drift.
+
+   ACCESSIBILITY (see notes inline, and §A11Y at the foot)
+   -------------------------------------------------------
+   • Risk + band scales never rely on colour alone — every chip carries a
+     SHAPE GLYPH and a WORD (▲ High / ● Medium / ■ Low). Safe for red-green
+     colour blindness.
+   • --brand-pink (#E51652) on white is 4.6:1 — passes AA for >=18px / bold,
+     and for UI components. For body-size pink text on white, use
+     --brand-pink-ink (#C9134A, 5.6:1). Never put pink text on navy.
+   ========================================================================= */
+
+:root {
+  /* ---- brand tokens (authoritative — brand_tokens.py) ---- */
+  --brand-pink:        #E51652;
+  --brand-pink-hover:  #C9134A;   /* hover + AA-safe pink text on white */
+  --brand-pink-ink:    #C9134A;
+  --brand-navy:        #2D455A;
+  --brand-navy-deep:   #1C2D3B;
+  --brand-slate:       #617383;
+  --brand-light-slate: #96A2AC;
+  --brand-body:        #1D1D1B;
+  --brand-white:       #FFFFFF;
+
+  /* ---- surface + line ---- */
+  --page-bg:     #F7F8FA;
+  --card-bg:     #FFFFFF;
+  --hairline:    #E6E9ED;
+  --hairline-2:  #EDF0F3;
+  --pink-tint:   #FDE7EE;   /* soft chips / pill backgrounds */
+  --pink-on-navy:#FFB3C7;   /* eyebrow/label text on navy */
+
+  /* ---- semantic scale (operator-confirmed; paired with a shape + word) ---- */
+  --ok:        #2E7D32;  --ok-bg:   #E7F3E8;
+  --warn:      #B26A00;  --warn-bg: #FBEFD8;   /* darkened from #E69500 for AA on white text/icons */
+  --warn-flag: #E69500;  /* the "action required" amber fill for solid badges */
+  --risk:      #C0392B;  --risk-bg: #FBE4E1;
+
+  /* ---- band scale (class/term frequency) ---- */
+  --band-a: #1D1D1B;  --band-a-bg: #E7E7E7;   /* All use this  ⬛ */
+  --band-b: #1A7A3F;  --band-b-bg: #DFF0E4;   /* Most          🟩 */
+  --band-c: #9A6212;  --band-c-bg: #FDECD6;   /* Some          🟧 */
+  --band-d: #9B2530;  --band-d-bg: #FADDE0;   /* A few         🟥 */
+
+  /* ---- type ---- */
+  --font-display: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* ---- shape ---- */
+  --r-sm: 6px;  --r-md: 9px;  --r-lg: 13px;  --r-xl: 16px;
+  --shadow-card: 0 3px 12px rgba(45, 69, 90, .09);
+  --shadow-pop:  0 10px 26px rgba(229, 22, 82, .12);
+
+  /* ---- rhythm ---- */
+  --gap: 14px;
+  --container: 1180px;
+}
+
+/* =========================================================================
+   BASE
+   ========================================================================= */
+.bd, .bd * { box-sizing: border-box; }
+.bd {
+  font-family: var(--font-body);
+  color: var(--brand-body);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.bd a { color: var(--brand-pink-ink); text-decoration: none; }
+.bd a:hover { color: var(--brand-pink-hover); text-decoration: underline; }
+
+.bd .wrap { max-width: var(--container); margin: 0 auto; padding: 0 20px; }
+.bd .pub { font-family: var(--font-display); }
+
+/* =========================================================================
+   SECTION HEADERS  —  numbered, quiet, consistent
+   ========================================================================= */
+.bd .eyebrow {
+  font-family: var(--font-display);
+  font-size: 12px; font-weight: 800; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--brand-pink-ink);
+}
+.bd h1, .bd .h1 { font-family: var(--font-display); font-weight: 800; font-size: 34px; line-height: 1.08; letter-spacing: -.9px; color: var(--brand-navy); margin: 8px 0; text-wrap: balance; }
+.bd h2, .bd .h2 { font-family: var(--font-display); font-weight: 800; font-size: 23px; line-height: 1.15; letter-spacing: -.4px; color: var(--brand-navy); margin: 4px 0; }
+.bd h3, .bd .h3 { font-weight: 800; font-size: 15px; color: var(--brand-navy); margin: 2px 0; }
+.bd .lede { font-size: 16px; color: var(--brand-slate); }
+.bd .muted { font-size: 12.5px; color: var(--brand-light-slate); }
+
+.bd .sec-head { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.bd .sec-head .num {
+  font-family: var(--font-display); font-weight: 800; font-size: 12px;
+  color: #fff; background: var(--brand-navy);
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+
+/* =========================================================================
+   CARDS + LAYOUT HELPERS
+   ========================================================================= */
+.bd .card { background: var(--card-bg); border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 16px 18px; box-shadow: var(--shadow-card); }
+.bd .card.flush { box-shadow: none; }
+.bd .grid { display: grid; gap: var(--gap); }
+.bd .grid-2 { grid-template-columns: repeat(2, 1fr); }
+.bd .grid-3 { grid-template-columns: repeat(3, 1fr); }
+.bd .grid-4 { grid-template-columns: repeat(4, 1fr); }
+.bd .row { display: flex; gap: var(--gap); }
+.bd .between { justify-content: space-between; align-items: center; }
+.bd .divide { height: 1px; background: var(--hairline); border: 0; margin: 6px 0; }
+
+/* metric tiles (portfolio / sector figures) */
+.bd .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.bd .metric { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 12px 14px; }
+.bd .metric .k { font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: var(--brand-light-slate); }
+.bd .metric .v { font-family: var(--font-display); font-weight: 800; font-size: 26px; letter-spacing: -.6px; color: var(--brand-navy); }
+
+/* =========================================================================
+   CTA BLOCK  —  loud, and repeated down the page
+   Repeat .cta-block at: end of REVEAL 1, after the assessment result,
+   and in the offer. Never bury the only CTA at the very bottom.
+   ========================================================================= */
+.bd .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--font-display); font-weight: 800; font-size: 15px;
+  padding: 13px 22px; border-radius: var(--r-md); border: 1.5px solid transparent;
+  cursor: pointer; text-align: center; transition: background .15s ease, transform .15s ease;
+}
+.bd .btn-primary { background: var(--brand-pink); color: #fff; }
+.bd .btn-primary:hover { background: var(--brand-pink-hover); text-decoration: none; }
+.bd .btn-secondary { background: #fff; color: var(--brand-navy); border-color: var(--brand-navy); }
+.bd .btn-secondary:hover { background: var(--brand-navy); color: #fff; text-decoration: none; }
+.bd .btn-ghost { background: #fff; color: var(--brand-slate); border-color: var(--hairline); font-weight: 700; }
+.bd .btn-block { width: 100%; }
+.bd .cta-block { display: flex; gap: 10px; flex-wrap: wrap; }
+.bd .cta-block .btn { flex: 1 1 auto; }
+
+/* =========================================================================
+   CALLOUT / TRUST PANELS  —  promote the differentiators out of body text
+   ========================================================================= */
+.bd .callout { border-left: 3px solid var(--brand-pink); background: var(--pink-tint); border-radius: 0 var(--r-md) var(--r-md) 0; padding: 12px 15px; }
+.bd .trust { background: var(--brand-navy); color: #fff; border-radius: var(--r-xl); padding: 18px 20px; }
+.bd .trust .eyebrow { color: var(--pink-on-navy); }
+.bd .trust p { color: #EAF0F4; }
+.bd .trust strong { color: #fff; }
+.bd .stars { color: #FFC53D; letter-spacing: 1px; }
+/* the 98% / "we'll tell you not to file" facts — a row of proof chips */
+.bd .proof { display: flex; gap: 10px; flex-wrap: wrap; }
+.bd .proof .p { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700;
+  background: #fff; border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 8px 13px; color: var(--brand-navy); }
+.bd .proof .p .big { font-family: var(--font-display); font-weight: 800; color: var(--brand-pink-ink); }
+
+/* =========================================================================
+   BAND CHIPS  (class/term frequency)  —  glyph + word, never colour alone
+   Markup:  <span class="chip band-a"><i>⬛</i> All use this</span>
+   ========================================================================= */
+.bd .chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-display);
+  font-size: 11px; font-weight: 800; letter-spacing: .2px; padding: 3px 8px; border-radius: var(--r-sm); }
+.bd .chip i { font-style: normal; }
+.bd .band-a { background: var(--band-a-bg); color: var(--band-a); }
+.bd .band-b { background: var(--band-b-bg); color: var(--band-b); }
+.bd .band-c { background: var(--band-c-bg); color: var(--band-c); }
+.bd .band-d { background: var(--band-d-bg); color: var(--band-d); }
+
+/* =========================================================================
+   RISK CHIPS  (High / Medium / Low)  —  shape + word + colour
+   Markup:  <span class="risk risk-hi"><i>▲</i> High</span>
+            <span class="risk risk-md"><i>●</i> Medium</span>
+            <span class="risk risk-lo"><i>■</i> Low</span>
+   ========================================================================= */
+.bd .risk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800;
+  padding: 3px 9px; border-radius: 20px; }
+.bd .risk i { font-style: normal; font-size: 11px; }
+.bd .risk-hi { background: var(--risk-bg); color: var(--risk); }
+.bd .risk-md { background: var(--warn-bg); color: var(--warn); }
+.bd .risk-lo { background: var(--ok-bg);   color: var(--ok); }
+
+/* =========================================================================
+   DATA TABLES  —  read as a report, not a spreadsheet
+   Use for: Top-3 companies, marks-like-yours, benchmark, class rows.
+   ========================================================================= */
+.bd .tbl { border: 1px solid var(--hairline); border-radius: var(--r-md); overflow: hidden; }
+.bd .tbl table { width: 100%; border-collapse: collapse; }
+.bd .tbl th { background: var(--brand-navy); color: #fff; font-family: var(--font-display);
+  font-size: 11px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+  text-align: left; padding: 9px 12px; }
+.bd .tbl td { font-size: 13px; padding: 9px 12px; border-top: 1px solid var(--hairline-2); color: var(--brand-slate); }
+.bd .tbl tr td:first-child { font-weight: 700; color: var(--brand-navy); }
+.bd .tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+.bd .tbl tbody tr:nth-child(even) td { background: #FBFCFD; }
+
+/* banded CLASS ROW (the editable class list — replaces the grid look) */
+.bd .class-row { display: flex; align-items: center; gap: 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); padding: 11px 13px; background: #fff; }
+.bd .class-row.keep { border-color: var(--brand-navy); }
+.bd .class-row .body { flex: 1; }
+.bd .class-row .title { font-weight: 800; color: var(--brand-navy); font-size: 13px; }
+.bd .class-row .sub { font-size: 11px; color: var(--brand-light-slate); }
+.bd .class-row .pct { font-family: var(--font-display); font-weight: 800; color: var(--brand-navy); font-variant-numeric: tabular-nums; }
+
+/* class-distribution bars (sector) */
+.bd .dist { display: flex; flex-direction: column; gap: 7px; }
+.bd .dist .d { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--brand-slate); }
+.bd .dist .d .cl { width: 40px; font-weight: 800; color: var(--brand-navy); flex: none; }
+.bd .dist .d .track { flex: 1; height: 9px; background: var(--hairline-2); border-radius: 5px; overflow: hidden; }
+.bd .dist .d .fill { height: 100%; background: var(--brand-navy); border-radius: 5px; }
+
+/* =========================================================================
+   VIABILITY DIALS  —  the emotional centre. Static CSS conic-gradient rings,
+   so they render identically in Streamlit AND print (no JS).
+   Master:  <div class="dial dial-master" style="--v:72"> <span>72%</span> </div>
+   Sub:     <div class="dial dial-sub is-strength" style="--v:84"> … </div>
+   Grouping: wrap strengths in .dial-group.strengths, conflicts in .negatives —
+   each group carries a ▲ / ⚠ header so the split reads at a glance.
+   ========================================================================= */
+.bd .dial { position: relative; border-radius: 50%; display: grid; place-items: center; flex: none;
+  /* --v is a 0-100 number; *3.6deg = its share of the ring */
+  background: conic-gradient(var(--dial-color, var(--brand-pink)) calc(var(--v) * 3.6deg), #EDF0F2 0); }
+.bd .dial::before { content: ""; position: absolute; border-radius: 50%; background: #fff; }
+.bd .dial .val { position: relative; font-family: var(--font-display); font-weight: 800; color: var(--brand-navy); line-height: 1; }
+.bd .dial .cap { position: relative; font-size: 10px; font-weight: 800; color: var(--brand-slate); }
+.bd .dial-master { width: 132px; height: 132px; }
+.bd .dial-master::before { inset: 14px; }
+.bd .dial-master .val { font-size: 32px; }
+.bd .dial-sub { width: 66px; height: 66px; }
+.bd .dial-sub::before { inset: 9px; }
+.bd .dial-sub .val { font-size: 16px; }
+.bd .dial.is-strength { --dial-color: var(--ok); }
+.bd .dial.is-negative { --dial-color: var(--risk); }
+
+.bd .dial-group { display: flex; flex-direction: column; gap: 8px; }
+.bd .dial-group .g-head { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display);
+  font-size: 12px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; }
+.bd .dial-group.strengths .g-head { color: var(--ok); }     /* prefixed with ▲ in markup */
+.bd .dial-group.negatives .g-head { color: var(--risk); }   /* prefixed with ⚠ in markup */
+.bd .dials { display: flex; gap: 14px; flex-wrap: wrap; }
+.bd .subdial { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 84px; text-align: center; }
+.bd .subdial .nm { font-size: 11px; font-weight: 800; color: var(--brand-navy); line-height: 1.2; }
+
+/* =========================================================================
+   VIDEO WELL  —  16:9, top-right, above the fold on both reveals.
+   Two states, same box: .well.is-video (embed) and .well.is-quote (fallback
+   quote card). Keep aspect with the padding-top trick so it never reflows
+   when the VSL arrives.
+   ========================================================================= */
+.bd .well { position: relative; width: 100%; border-radius: var(--r-lg); overflow: hidden;
+  background: var(--brand-navy); color: #fff; }
+.bd .well::before { content: ""; display: block; padding-top: 56.25%; } /* 16:9 */
+.bd .well > .inner { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 16px; }
+.bd .well .ratio { position: absolute; top: 8px; right: 10px; font: 800 8px var(--font-display); letter-spacing: .6px; color: var(--pink-on-navy); }
+.bd .well .play { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.16);
+  display: flex; align-items: center; justify-content: center; }
+.bd .well .play::after { content: ""; border-left: 15px solid #fff; border-top: 9px solid transparent; border-bottom: 9px solid transparent; margin-left: 4px; }
+.bd .well.is-video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.bd .well .quote { font-size: 13px; font-style: italic; line-height: 1.5; color: #EAF0F4; max-width: 32ch; }
+.bd .well .quote .fact { font-style: normal; font-weight: 800; color: #fff; }
+.bd .well .who { font-size: 11px; font-weight: 800; color: var(--pink-on-navy); }
+
+/* =========================================================================
+   "DID YOU KNOW" CARD  +  CSS-ONLY CAROUSEL  (loading screens)
+   HARD CONSTRAINT: no JS (Python is blocked mid-build). Pure @keyframes.
+   4 cards, 5s each, 20s loop. Give the container .nuggets and 4 .nugget
+   children; the nth-child delays stagger them. An honest, time-based
+   progress bar (.build-progress) fills over the same 20s — it reflects the
+   wait, it does not claim a false percentage.
+   Set one plays on BUILD 1, set two on BUILD 2 (swap the card contents).
+   ========================================================================= */
+.bd .build { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px; max-width: 520px; margin: 0 auto; text-align: center; }
+.bd .build .msg { font-family: var(--font-display); font-weight: 800; font-size: 16px; color: var(--brand-navy); }
+.bd .build-progress { width: 100%; height: 8px; background: var(--hairline-2); border-radius: 5px; overflow: hidden; }
+.bd .build-progress > i { display: block; height: 100%; width: 6%; background: var(--brand-pink); border-radius: 5px;
+  animation: bd-progress 20s linear forwards; }
+@keyframes bd-progress { from { width: 6%; } to { width: 100%; } }
+
+.bd .nuggets { position: relative; width: 100%; height: 132px; }
+.bd .nugget { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 7px; justify-content: center;
+  border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 16px 18px; background: #fff;
+  box-shadow: var(--shadow-card); opacity: 0; animation: bd-nugget 20s infinite; }
+.bd .nugget .tag { font-family: var(--font-display); font-size: 10px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase; color: var(--brand-pink-ink); }
+.bd .nugget .t { font-weight: 800; font-size: 16px; color: var(--brand-navy); line-height: 1.2; }
+.bd .nugget .b { font-size: 13px; color: var(--brand-slate); line-height: 1.5; }
+.bd .nugget:nth-child(1) { animation-delay: 0s; }
+.bd .nugget:nth-child(2) { animation-delay: 5s; }
+.bd .nugget:nth-child(3) { animation-delay: 10s; }
+.bd .nugget:nth-child(4) { animation-delay: 15s; }
+/* visible for its 5s window (25% of 20s), crossfading at the edges */
+@keyframes bd-nugget { 0% { opacity: 0; } 2% { opacity: 1; } 23% { opacity: 1; } 25% { opacity: 0; } 100% { opacity: 0; } }
+/* progress dots under the carousel (decorative) */
+.bd .nug-dots { display: flex; gap: 6px; }
+.bd .nug-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--hairline); }
+@media (prefers-reduced-motion: reduce) {
+  .bd .nugget { animation: none; opacity: 1; position: relative; margin-bottom: 10px; }
+  .bd .nuggets { height: auto; }
+  .bd .build-progress > i { animation: none; width: 100%; }
+}
+
+/* =========================================================================
+   OFFER PANEL  —  £298 of work for £99. Make the maths impossible to miss.
+   ========================================================================= */
+.bd .offer { border: 1.5px solid var(--brand-pink); background: var(--pink-tint); border-radius: var(--r-xl); padding: 18px 20px; }
+.bd .offer .price { font-family: var(--font-display); font-weight: 800; font-size: 40px; letter-spacing: -1px; color: var(--brand-pink); line-height: 1; }
+.bd .offer .was { color: var(--brand-light-slate); text-decoration: line-through; font-weight: 700; }
+.bd .offer .cant-lose { font-weight: 800; color: var(--brand-pink-ink); }
+
+/* =========================================================================
+   URGENCY BAND  —  first-to-file close (survives print: navy fill + white text,
+   with a printable fallback border so it reads even if the fill is dropped).
+   ========================================================================= */
+.bd .urgency { background: var(--brand-navy); border: 1px solid var(--brand-navy); color: #fff;
+  border-radius: var(--r-xl); padding: 16px 18px; display: flex; align-items: center; gap: 16px; }
+.bd .urgency .eyebrow { color: var(--pink-on-navy); }
+.bd .urgency .headline { font-family: var(--font-display); font-weight: 800; font-size: 18px; line-height: 1.2; color: #fff; }
+.bd .urgency .headline em { font-style: normal; color: var(--pink-on-navy); }
+.bd .urgency p { color: #EAF0F4; font-size: 13px; margin: 4px 0 0; }
+
+/* =========================================================================
+   MOBILE  (single breakpoint — a meaningful share open the magic link on a phone)
+   Collapse every multi-column grid to one column; dials centre and stack;
+   the video well drops BELOW the hero copy rather than beside it; CTAs go
+   full-width.
+   ========================================================================= */
+@media (max-width: 640px) {
+  :root { --gap: 12px; }
+  .bd h1, .bd .h1 { font-size: 27px; }
+  .bd h2, .bd .h2 { font-size: 20px; }
+  .bd .grid-2, .bd .grid-3, .bd .grid-4, .bd .metrics { grid-template-columns: 1fr; }
+  .bd .row { flex-direction: column; }
+  .bd .hero { flex-direction: column-reverse; }   /* well below copy on phone */
+  .bd .dials { justify-content: center; }
+  .bd .cta-block { flex-direction: column; }
+  .bd .cta-block .btn, .bd .btn { width: 100%; }
+  .bd .urgency { flex-direction: column; text-align: center; }
+  .bd .wrap { padding: 0 14px; }
+}
+
+/* =========================================================================
+   PRINT  —  A4 branded report. Print-to-PDF only (no JS at print time).
+   The dials are static CSS so they print as-is. Force colour on the pieces
+   that carry meaning; give navy panels a safe border so they survive a
+   printer that drops backgrounds.
+   ========================================================================= */
+@media print {
+  @page { size: A4; margin: 14mm; }
+  .bd { color: #000; }
+  .bd, .bd * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .bd .no-print, .bd .well .play, .bd .build, .bd .btn { display: none !important; }
+  .bd .card, .bd .tbl, .bd .offer, .bd .dial, .bd .urgency,
+  .bd .metric, .bd .class-row, .bd .callout { break-inside: avoid; }
+  .bd h1, .bd h2, .bd .sec-head { break-after: avoid; }
+  .bd .trust, .bd .urgency, .bd .well { border: 1px solid var(--brand-navy); }
+  .bd .offer { border: 1.5px solid var(--brand-pink); }
+  /* on print the video well becomes the quote card automatically — hide the
+     iframe, keep the quote (mark the iframe container .is-video and the quote
+     block .is-quote; both live in the same .well). */
+  .bd .well.is-video .inner { display: flex !important; }
+}
+
+/* =========================================================================
+   §A11Y  —  quick reference for implementers
+   • Every risk/band value = SHAPE + WORD + colour (see .risk / .chip). Do not
+     ship a colour-only variant.
+   • Pink text on white: use var(--brand-pink-ink) (#C9134A) at body size;
+     var(--brand-pink) is fine for >=18px bold and for buttons/fills.
+   • Amber: --warn (#B26A00) for text/icons on white (AA); --warn-flag
+     (#E69500) only as a solid badge fill with white text.
+   • prefers-reduced-motion disables the carousel + progress animation and
+     shows all nuggets stacked.
+   • Dial values are always printed as text inside the ring — the ring is
+     decorative reinforcement, not the only signal.
+   ========================================================================= */
+
+/* =========================================================================
+   STREAMLIT WIDGET HOOKS  (best-effort; verify against your Streamlit build)
+   Wrap injected markup in .bd. These nudge native widgets toward the brand
+   without restructuring Streamlit's DOM.
+   ========================================================================= */
+.bd :is(.stButton) > button { background: var(--brand-pink); color: #fff; border: 0; border-radius: var(--r-md);
+  font-weight: 800; padding: 12px 20px; transition: background .15s ease; }
+.bd :is(.stButton) > button:hover { background: var(--brand-pink-hover); }
+.bd :is(.stRadio, .stCheckbox) label { font-size: 14px; color: var(--brand-body); }
+.bd :is(.stDataFrame, .stDataEditor) { border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--hairline); }
