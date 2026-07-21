@@ -119,6 +119,23 @@ def bd(markup: str):
     st.markdown(f'<div class="bd">{markup}</div>', unsafe_allow_html=True)
 
 
+def scroll_top():
+    """Put a new screen at the top of the viewport.
+
+    Streamlit preserves scroll position across reruns, so moving from
+    reveal 1 (a long page) to input 2 dropped you into the middle of the
+    questions. st.markdown strips <script>, so this goes through a
+    zero-height components iframe and reaches up to the parent document.
+    """
+    import streamlit.components.v1 as _components
+    _components.html(
+        "<script>window.parent.document."
+        "querySelector('section.main, [data-testid=\"stAppViewContainer\"]')"
+        "?.scrollTo({top:0,behavior:'instant'});"
+        "window.parent.scrollTo({top:0,behavior:'instant'});</script>",
+        height=0)
+
+
 def _h2(text: str) -> str:
     return f'<h2 class="h2" style="margin-top:18px">{bk.esc(text)}</h2>'
 
@@ -206,6 +223,9 @@ def _cards(which: str, message: str) -> str:
 
 
 _stage = st.session_state.get("stage", "input")
+if st.session_state.get("_last_stage") != _stage:
+    st.session_state["_last_stage"] = _stage
+    scroll_top()
 _header(_stage, st.session_state.get("owner_name")
         or st.session_state.get("trading_name") or None)
 
@@ -542,9 +562,10 @@ if trading_name.strip():
               + bk.esc(company_name)
               + (f" &middot; trading {trading_years:g} years"
                  if trading_years else ""))
-bd(bk.hero(eyebrow="Your tailored report",
-           title="How protectable is &ldquo;" + bk.esc(display_name) + "&rdquo;?",
-           lede=_lede2))
+_hero2 = bk.hero(
+    eyebrow="Your tailored report",
+    title="How protectable is &ldquo;" + bk.esc(display_name) + "&rdquo;?",
+    lede=_lede2)   # rendered in REVEAL 2 only — see below
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1097,6 +1118,12 @@ if _stage == "input2":
 # ══════════════════════════════════════════════════════════════════════
 # REVEAL 2 — the full tailored report
 # ══════════════════════════════════════════════════════════════════════
+# The hero + video well belong to THIS screen only. Built above (it needs
+# display_name), rendered here — it was previously emitted at module level,
+# which put "Your tailored report" and the VSL well at the top of the free
+# sector reveal and of input 2, promising the thing they hadn't reached yet.
+bd(_hero2)
+
 
 # Rebuild what input 2 produced: the classes/terms they kept (if they didn't
 # skip), so the viability score, the branded sheet and the ledger all reflect
@@ -1196,7 +1223,7 @@ _v = vb.compute(name=display_name,
                 high=_c.get("High Risk", 0), medium=_c.get("Medium Risk", 0),
                 low=_c.get("Low Risk", 0),
                 years=_years, sector_terms=_sector_terms)
-st.markdown(vb.gauge_html(_v), unsafe_allow_html=True)
+bd(vb.gauge_html(_v))    # must go through bd(): every dial rule is `.bd .dial…`
 if _v["scores"]["distinctiveness"] < 45:
     st.caption("Distinctiveness is the dial to talk about: names built from "
                "everyday trade words are harder to register as words alone — "
