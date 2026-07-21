@@ -299,51 +299,47 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
           <tbody>{class_rows}</tbody></table>
         """
 
+    import brandkit as bk
+
+    # The document now rides on braudit.css (the same stylesheet the app
+    # injects), so the PDF and the screen cannot drift apart. Only @page and
+    # a couple of print-only rules are added here.
+    ident = []
+    if (sector_company or {}).get("number"):
+        ident.append(f"company no. {_esc(sector_company['number'])}")
+    ident.append(today)
+
+    # Built outside the f-string: an f-string expression can't contain a
+    # backslash before Python 3.12, and the lede needs escaped quotes.
+    _prepared_for = (sector_company or {}).get('name') or company_name
+    _lede = ('Prepared for <strong style="color:var(--brand-navy)">'
+             + _esc(_prepared_for) + '</strong> &middot; '
+             + ' &middot; '.join(ident))
+    _hero = bk.hero(eyebrow="Trademark viability report",
+                    title='How protectable is &ldquo;'
+                          + _esc(company_name) + '&rdquo;?',
+                    lede=_lede)
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>Industry Trademark Report — {_esc(company_name)}</title>
 <style>
-  @page {{ size: A4; margin: 18mm; }}
-  body {{ font-family: 'Helvetica Neue', Arial, sans-serif; color:{BODY};
-          font-size: 12px; line-height: 1.5; }}
-  .hdr {{ display:flex; justify-content:space-between; align-items:center;
-          border-bottom: 3px solid {PINK}; padding-bottom: 10px; margin-bottom: 18px; }}
-  .hdr img {{ height: 46px; }}
-  .hdr .meta {{ text-align:right; color:{SLATE}; font-size: 11px; }}
-  h1 {{ color:{NAVY}; font-size: 22px; margin: 4px 0 2px; }}
-  h2 {{ color:{PINK}; font-size: 16px; margin-top: 26px;
-        border-bottom:1px solid #eee; padding-bottom:4px; }}
-  h3 {{ color:{NAVY}; font-size: 13px; margin-top: 18px; }}
-  .muted {{ color:{SLATE}; }}
-  table {{ width:100%; border-collapse: collapse; margin-top: 6px; }}
-  th, td {{ text-align:left; padding: 5px 8px; border-bottom: 1px solid #e8e8e8; }}
-  th {{ background:{NAVY}; color:#fff; font-weight:600; font-size:11px; }}
-  td.num, th.num {{ text-align:right; }}
-  .cards {{ display:flex; gap:12px; margin: 12px 0; }}
-  .card {{ flex:1; background:#faf3f5; border:1px solid #f0d6de; border-radius:8px;
-           padding:12px; text-align:center; }}
-  .card .big {{ color:{PINK}; font-size: 24px; font-weight:700; }}
-  .card .lbl {{ color:{SLATE}; font-size: 11px; }}
-  .chip {{ font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px;
-           white-space:nowrap; }}
-  table, .clsrow {{ page-break-inside: avoid; }}
-  .foot {{ margin-top: 28px; color:{SLATE}; font-size: 10px;
-           border-top:1px solid #eee; padding-top: 8px; }}
-.next-steps {{ margin-top:26px; padding:14px 18px; border:1px solid #E4E7EC;
-                border-radius:12px; font-size:13px; }}
-  .next-steps b {{ display:block; margin-bottom:6px; }}
-  .next-steps a {{ color:#1D1D1B; font-weight:600; }}
-</style></head><body>
-  <div class="hdr">
-    <div>{'<img src="'+logo+'"/>' if logo else '<strong>The Trademark Helpline</strong>'}</div>
-    <div class="meta">Industry Trademark Report<br>Generated {today}</div>
+{bk.css()}
+  @page {{ size: A4; margin: 16mm; }}
+  body {{ margin:0; }}
+  /* Print can drop background colours, so anything that carries meaning by
+     fill gets a border too. */
+  .bd .urgency, .bd .offer, .bd .callout {{ border:1px solid var(--hairline); }}
+  .bd .pagebreak {{ page-break-before: always; }}
+  .bd table, .bd .clsrow, .bd .dial-group {{ page-break-inside: avoid; }}
+</style></head><body><div class="bd">
+  <div class="between" style="border-bottom:2px solid var(--brand-pink);
+       padding-bottom:10px;margin-bottom:16px">
+    <div>{'<img src="'+logo+'" style="height:40px">' if logo else '<strong>The Trademark Helpline</strong>'}</div>
+    <div class="muted" style="text-align:right;font-size:10px">
+      Industry Trademark Report<br>Generated {today}</div>
   </div>
-  <h1>{_esc(company_name)}</h1>
-  <p class="muted">Applicant on record · IPO {_esc(applicant.get('ipo_identifier'))}
-     · {_esc(len(marks or []))} trademark(s)</p>
 
-  <h2>Trademarks held</h2>
-  <table><thead><tr><th>Application</th><th>Mark</th><th>Status</th><th>Expiry</th></tr></thead>
-    <tbody>{marks_rows}</tbody></table>
+  {_hero}
 
   {_viability_block(viability)}
   {_risk_block(risk)}
@@ -351,21 +347,23 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
   {_assessment_block(assessment)}
 
   {sector_block}
-
   {_top_applicants_block(top_applicant_marks)}
-
   {_benchmark_block(benchmark)}
 
-  <div class="foot">Counts include all trademarks ever filed (live and lapsed), for this
-     legal entity only — group subsidiaries with separate company numbers are not aggregated.<br>
-     The Trademark Helpline · Source: UK IPO registry (TemmyDB).
-     Figures reflect companies matched to Companies House SIC codes. This report
-     is informational and not legal advice.</div>
+  <h2>Trademarks held</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Application</th><th>Mark</th><th>Status</th><th>Expiry</th></tr></thead>
+    <tbody>{marks_rows}</tbody></table></div>
 
-  <div class="next-steps">
-    <b>Next steps</b>
-    <a href="https://www.thetrademarkhelpline.com/make-an-enquiry/">Make an Enquiry</a> ·
-    <a href="https://link.cerebrumai.io/widget/booking/ZArxD6BnggpV7bsSF0ks">Talk to Us — book a call</a> ·
-    <a href="https://www.thetrademarkhelpline.com/request-brand-audit/">Request Brand Audit</a>
+  {bk.offer_block()}
+  {bk.urgency_block()}
+
+  <div class="muted" style="border-top:1px solid var(--hairline);margin-top:22px;
+       padding-top:10px;font-size:9.5px">
+    Counts include all trademarks ever filed (live and lapsed), for this legal
+    entity only — group subsidiaries with separate company numbers are not
+    aggregated.<br>
+    The Trademark Helpline &middot; Source: UK IPO registry (TemmyDB). This
+    report is informational and not legal advice.
   </div>
-</body></html>"""
+</div></body></html>"""
