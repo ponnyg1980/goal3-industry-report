@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import html
 import os
+import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRAND = os.path.join(HERE, "brand")
@@ -335,15 +336,29 @@ hr { border-color: var(--hairline) !important; }
 """
 
 
+def minify(text: str) -> str:
+    """Strip comments and collapse whitespace to ONE line.
+
+    This is not about file size — it is the whole reason the stylesheet
+    renders at all. `st.markdown` parses its input as Markdown before
+    honouring the HTML, and in Markdown a raw-HTML block ENDS AT THE FIRST
+    BLANK LINE. braudit.css has 35 of them, so everything after line 8 fell
+    out of the <style> element and was rendered as page text — which is
+    exactly what a screen full of CSS looks like.
+
+    One line, no blank lines, nothing for the Markdown parser to break on.
+    """
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)   # comments
+    text = re.sub(r"\s+", " ", text)                     # all whitespace
+    text = re.sub(r"\s*([{}:;,>])\s*", r"\1", text)      # around syntax
+    return text.strip()
+
+
 def install(st) -> None:
     """Inject the font, the stylesheet and the Streamlit layer. Call once,
     immediately after set_page_config."""
-    st.markdown(
-        f'<link rel="preconnect" href="https://fonts.googleapis.com">'
-        f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-        f'<link href="{FONT_URL}" rel="stylesheet">'
-        f"<style>{css()}\n{_GLOBAL_CSS}</style>",
-        unsafe_allow_html=True)
+    sheet = minify(f"@import url('{FONT_URL}');" + css() + _GLOBAL_CSS)
+    st.markdown(f"<style>{sheet}</style>", unsafe_allow_html=True)
 
 
 # ── display components (replacing st.metric / st.dataframe / st.header) ──
