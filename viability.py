@@ -173,45 +173,36 @@ def _dial(v, label, sub):
 
 
 def gauge_html(result: dict, *, brand_hex: str = '#1D1D1B') -> str:
-    strengths = ''.join(_dial(result['scores'][k], lab, sub)
-                        for k, (lab, sub) in STRENGTH_LABELS.items())
-    cv = result['scores']['conflicts']
-    conflict = _dial(cv, *CONFLICT_LABEL)
-    m = result['master']
-    mc = _colour(m)
+    """The dials, as Claude Design's `.dial` components.
+
+    All styling now lives in braudit.css — the only thing passed in is `--v`,
+    a 0-100 number the conic-gradient reads. That keeps screen and print
+    identical, and means the dials survive print-to-PDF (no JS, no canvas).
+
+    `brand_hex` is retained so older callers don't break; colour comes from
+    the stylesheet.
+    """
+    def sub(value, label, is_strength=True):
+        kind = "is-strength" if is_strength else "is-negative"
+        return (f'<div class="subdial">'
+                f'<div class="dial dial-sub {kind}" style="--v:{int(value)}">'
+                f'<span class="val">{int(value)}</span></div>'
+                f'<div class="nm">{label}</div></div>')
+
+    strengths = ''.join(sub(result['scores'][k], lab, True)
+                        for k, (lab, _s) in STRENGTH_LABELS.items())
+    conflict = sub(result['scores']['conflicts'], CONFLICT_LABEL[0], False)
+    m = int(result['master'])
     return f"""
-<div class="viability">
-  <div class="master">
-    <div class="dial big" style="background:
-      conic-gradient({mc} {m * 3.6}deg, #ECEFF1 0deg)">
-      <div class="hole"><span>{m}%</span></div>
-    </div>
-    <b>Trademark Viability</b>
-    <small>Your brand strengths, less the pressure from conflicting
-    marks.</small>
+<div class="row" style="gap:28px;align-items:center;flex-wrap:wrap">
+  <div style="text-align:center">
+    <div class="dial dial-master" style="--v:{m}">
+      <span class="val">{m}%</span><span class="cap">viable</span></div>
   </div>
-  <div class="vgroup pos">
-    <div class="vgh">Brand strengths</div>
-    <div class="gauges">{strengths}</div>
+  <div class="dial-group strengths" style="flex:1;min-width:280px">
+    <div class="g-head">&#9650; Brand strengths</div>
+    <div class="dials">{strengths}</div>
+    <div class="g-head" style="margin-top:10px;color:var(--risk)">&#9888; Working against you</div>
+    <div class="dials negatives">{conflict}</div>
   </div>
-  <div class="vgroup neg">
-    <div class="vgh">Working against you</div>
-    <div class="gauges">{conflict}</div>
-  </div>
-</div>
-<style>
-.viability{{display:flex;gap:28px;align-items:center;flex-wrap:wrap;
-  font-family:inherit;margin:6px 0 2px}}
-.viability .master{{text-align:center;max-width:190px}}
-.viability .gauges{{display:flex;gap:22px;flex-wrap:wrap}}
-.viability .vg{{text-align:center;width:110px}}
-.viability .dial{{width:92px;height:92px;border-radius:50%;margin:0 auto 6px;
-  display:flex;align-items:center;justify-content:center}}
-.viability .dial.big{{width:150px;height:150px}}
-.viability .hole{{width:70%;height:70%;background:#fff;border-radius:50%;
-  display:flex;align-items:center;justify-content:center}}
-.viability .dial span{{font-weight:700;font-size:18px;color:{brand_hex}}}
-.viability .dial.big span{{font-size:30px}}
-.viability b{{display:block;font-size:13px;margin-top:2px}}
-.viability small{{display:block;color:#667085;font-size:11px;line-height:1.35}}
-</style>"""
+</div>"""
