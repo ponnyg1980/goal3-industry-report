@@ -94,8 +94,41 @@ def c_ch_profile(num):
 
 
 st.set_page_config(page_title="Industry Trademark Report", layout="wide")
-st.title("Industry Trademark Report")
-st.caption("MOAT for Braudit · Goal #3 — company + sector trademark intelligence")
+
+# ── Claude Design stylesheet ──────────────────────────────────────────
+# Injected once, before anything renders. Every raw-HTML block we emit must
+# be wrapped in .bd so the scoped rules apply — bd() below does that.
+import brandkit as bk
+
+st.markdown(f"<style>{bk.css()}</style>", unsafe_allow_html=True)
+
+
+def bd(markup: str):
+    """Render scoped, styled HTML."""
+    st.markdown(f'<div class="bd">{markup}</div>', unsafe_allow_html=True)
+
+
+# ── persistent header (continuity instead of a progress bar) ──────────
+# Six screens have to feel like one product. A 6-step tracker would make a
+# two-decision journey look like an application form, so we carry a fixed
+# header plus a two-word stage tag instead: "Free sector report" becomes
+# "Your tailored report" — which also frames the second half as the upgrade.
+_STAGE_TAG = {"input": "Free sector report", "build1": "Free sector report",
+              "sector": "Free sector report", "input2": "Your tailored report",
+              "build2": "Your tailored report", "report": "Your tailored report"}
+
+
+def _header(stage: str, subject: str | None = None):
+    logo = bk.asset_uri("logo.svg")
+    left = (f'<img src="{logo}" alt="The Trademark Helpline" '
+            f'style="height:34px">' if logo else
+            '<span class="h3">The Trademark Helpline</span>')
+    who = (f'<span class="muted">&middot;&nbsp;{bk.esc(subject)}</span>'
+           if subject else "")
+    bd(f'<div class="between" style="padding:6px 0 14px;'
+       f'border-bottom:1px solid var(--hairline);margin-bottom:18px">'
+       f'<div class="row" style="gap:12px;align-items:center">{left}{who}</div>'
+       f'<span class="eyebrow">{_STAGE_TAG.get(stage, "")}</span></div>')
 
 # ── service status (client-facing: only speak up when something is down) ──
 if not (da.api_ready() and da.health()):
@@ -154,6 +187,9 @@ def _cards(which: str, message: str) -> str:
 
 
 _stage = st.session_state.get("stage", "input")
+_header(_stage, st.session_state.get("owner_name")
+        or st.session_state.get("trading_name") or None)
+
 if _link_company and _stage == "input":
     # Magic link: straight past the form to the build.
     st.session_state["company_number"] = _link_company
@@ -169,10 +205,11 @@ if _link_company and _stage == "input":
 
 # ── STAGE: input 1 — find the company ────────────────────────────────
 if _stage == "input":
-    st.subheader("Step 1 · Who are you?")
-    st.caption("Type the registered company name, or the name trademarks are "
-               "held in — we search Companies House and the UK trademark "
-               "register together, so either works.")
+    bd('<div class="eyebrow">Step 1 of 2</div>'
+       '<h1 class="h1">Who are you?</h1>'
+       '<p class="lede">Type your registered company name, or the name your '
+       'trademarks are held in. We search Companies House and the UK '
+       'trademark register together, so either works.</p>')
 
     _name = st.text_input("Company or trademark owner name",
                           placeholder="e.g. Greggs Plc")
@@ -233,7 +270,8 @@ if _stage == "input":
     _tn, _tny, _same, _type = "", None, True, None
     if _q:
         st.divider()
-        st.subheader("Step 2 · What do your customers call you?")
+        bd('<div class="eyebrow">Step 2 of 2</div>'
+           '<h2 class="h2">What do your customers call you?</h2>')
 
         _default_style = (_cand or {}).get("display_name") or _q
         # Key includes the candidate, so picking a different company re-fills
@@ -502,7 +540,11 @@ if _stage == "sector":
     _n_own = int(st.session_state.get("owner_marks_n") or 0)
     _scen = st.session_state.get("scenario")
 
-    st.subheader(_owner)
+    bd(bk.hero(
+        eyebrow="Free sector report",
+        title=f"How does {bk.esc(_owner)}&rsquo;s industry protect itself?",
+        lede=("Real filing behaviour from the UK register &mdash; not our "
+              "opinion. Your tailored report comes next.")))
     m1, m2, m3 = st.columns(3)
     m1.metric("Trademarks held", _n_own or len(marks))
     m2.metric("Company no.",
@@ -704,6 +746,8 @@ if _stage == "sector":
                  use_container_width=True):
         st.session_state["stage"] = "input2"
         st.rerun()
+    bd('<p class="muted" style="text-align:center;margin-top:6px">'
+       'Takes about a minute. No email required.</p>')
     st.stop()
 
 
@@ -740,7 +784,11 @@ if _stage == "input2":
 
 
         def _chip(row):
-            """'⬛ All use this' from a row carrying tier + band label."""
+            """'⬛ All use this' — glyph AND word, never colour alone, so the
+            band survives a colour-blind reader and a greyscale printout.
+            Plain text here because it goes inside st.data_editor cells,
+            which strip HTML; the styled bk.band_chip() is used wherever we
+            render our own markup."""
             return f"{_TIER_EMOJI.get(row.get('tier', 'd'), '🟥')} {row.get('band', '')}"
 
 
@@ -1066,10 +1114,11 @@ if da.query_runs_ready():
             own_applicant_names=[appl.get("name") or "",
                                  (sector_company or {}).get("name") or ""])
         counts = risk_res["counts"]
-        r1, r2, r3 = st.columns(3)
-        r1.metric("🔴 High risk", counts.get("High Risk", 0))
-        r2.metric("🟠 Medium risk", counts.get("Medium Risk", 0))
-        r3.metric("🟢 Low risk", counts.get("Low Risk", 0))
+        bd('<div class="row" style="gap:8px;margin:2px 0 10px">'
+           + bk.risk_chip("High Risk", counts.get("High Risk", 0))
+           + bk.risk_chip("Medium Risk", counts.get("Medium Risk", 0))
+           + bk.risk_chip("Low Risk", counts.get("Low Risk", 0))
+           + '</div>')
         st.dataframe(
             [{"Risk": x["risk"], "Mark": x.get("verbal_element_text"),
               "Owner": x.get("applicant_name"), "Status": x.get("status"),
@@ -1287,43 +1336,28 @@ if q1_idx is not None and q3_idx is not None:
                        use_container_width=True)
 
 
-st.subheader("Next step: the Brand Audit")
+bd(bk.sec_head(6, "The next step"))
 st.markdown(
     "We don't advise anyone to file an application without a **Brand Audit** "
     "first. The audit expands on this quick report with searches across "
     "**international registers, Companies House, domain registrations, social "
     "media and online shopping channels** — the places oppositions and "
     "disputes actually come from.\n\n"
-    "**What you get for £99:**\n\n"
-    "- **Brand Audit — £149.** An hour of specialist research across all the "
-    "sources above, on your exact name and classes.\n"
-    "- **Review & Consultation — £149.** An hour with one of our team, by "
-    "phone or Teams, walking through the findings and what they mean for "
-    "you.\n\n"
-    "That's **£298 of specialist work for £99** — and it gets better:\n\n"
-    "- **If you proceed to trademark with us**, the £99 is deducted from "
-    "your application fees — so the audit effectively costs you nothing.\n"
-    "- **If we advise you *not* to proceed** — because the honest answer is "
-    "that this name won't succeed — you can have another audit and "
-    "consultation on a different brand, any time within **3 months** of "
-    "your consultation.\n\n"
-    "Either way, you can't lose the £99: it becomes your application "
-    "discount, or your second audit.\n\n"
     "Our application success rate over the past 12 months is **98%**, against "
     "an industry average of about 83% — and that gap is mostly down to the "
     "research done at audit stage.")
-_c1, _c2, _c3 = st.columns(3)
-with _c1:
-    st.link_button("Request Brand Audit — £99",
-                   "https://www.thetrademarkhelpline.com/request-brand-audit/",
-                   type="primary", use_container_width=True)
+
+# The offer and the first-to-file close, as designed blocks. These carry the
+# CTAs, so the three bare link_buttons that used to sit here are gone — a
+# single strong ask beats three equal ones.
+bd(bk.offer_block())
+bd(bk.urgency_block())
+_c2, _c3 = st.columns(2)
 with _c2:
-    st.link_button("Talk to us — book a call",
-                   "https://link.cerebrumai.io/widget/booking/ZArxD6BnggpV7bsSF0ks",
+    st.link_button("Talk to us — book a call", bk.URL_CALL,
                    use_container_width=True)
 with _c3:
-    st.link_button("Make an enquiry",
-                   "https://www.thetrademarkhelpline.com/make-an-enquiry/",
+    st.link_button("Make an enquiry", bk.URL_ENQUIRY,
                    use_container_width=True)
 
 # ── Report ledger: one row per report, for follow-up + Zoho ──────────
