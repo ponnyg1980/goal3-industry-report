@@ -100,12 +100,23 @@ st.set_page_config(page_title="Industry Trademark Report", layout="wide")
 # be wrapped in .bd so the scoped rules apply — bd() below does that.
 import brandkit as bk
 
-st.markdown(f"<style>{bk.css()}</style>", unsafe_allow_html=True)
+# Full install: webfont + stylesheet + the Streamlit layer. Injecting the
+# scoped stylesheet alone left the page background, the fonts and every
+# native widget at Streamlit defaults, so the design only landed in patches.
+bk.install(st)
 
 
 def bd(markup: str):
     """Render scoped, styled HTML."""
     st.markdown(f'<div class="bd">{markup}</div>', unsafe_allow_html=True)
+
+
+def _h2(text: str) -> str:
+    return f'<h2 class="h2" style="margin-top:18px">{bk.esc(text)}</h2>'
+
+
+def _h3(text: str) -> str:
+    return f'<h3 class="h3" style="margin-top:16px">{bk.esc(text)}</h3>'
 
 
 # ── persistent header (continuity instead of a progress bar) ──────────
@@ -517,10 +528,15 @@ with _btn:
             st.session_state.pop(_k, None)
         st.rerun()
 
-st.header(display_name)
+_lede2 = "Prepared for <strong>" + bk.esc(company_name) + "</strong>"
 if trading_name.strip():
-    st.caption(f"Trading name of **{company_name}**"
-               + (f" · trading {trading_years:g} years" if trading_years else ""))
+    _lede2 = ("Trading as <strong>" + bk.esc(trading_name) + "</strong> &middot; "
+              + bk.esc(company_name)
+              + (f" &middot; trading {trading_years:g} years"
+                 if trading_years else ""))
+bd(bk.hero(eyebrow="Your tailored report",
+           title="How protectable is &ldquo;" + bk.esc(display_name) + "&rdquo;?",
+           lede=_lede2))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -545,16 +561,13 @@ if _stage == "sector":
         title=f"How does {bk.esc(_owner)}&rsquo;s industry protect itself?",
         lede=("Real filing behaviour from the UK register &mdash; not our "
               "opinion. Your tailored report comes next.")))
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Trademarks held", _n_own or len(marks))
-    m2.metric("Company no.",
-              (_cand_ss.get("company_number")
-               or (sector_company or {}).get("number") or "—"))
-    # Was `_scen != "ch_only"`, which said "Yes" for a trading style with no
-    # candidate at all (_scen is None). The honest answer is simply whether
-    # we found any marks in this name.
-    m3.metric("On the register",
-              "Yes" if (_n_own or marks) else "No")
+    # "On the register" answers from the marks, not from the scenario flag —
+    # a trading style has no candidate, so the flag was None and read "Yes".
+    bd(bk.metrics([
+        ("Trademarks held", _n_own or len(marks)),
+        ("Company no.", (_cand_ss.get("company_number")
+                         or (sector_company or {}).get("number") or "—")),
+        ("On the register", "Yes" if (_n_own or marks) else "No")]))
 
     if _scen == "ch_only":
         st.info("We found no UK trademarks in this company's name. That isn't "
@@ -571,20 +584,20 @@ if _stage == "sector":
                                       _cand_ss.get("company_number"),
                                       tuple(st.session_state.get("owner_iids") or []))
             if _own_rows:
-                st.dataframe(
-                    [{"Mark": r.get("mark"), "Status": r.get("status"),
-                      "Application": r.get("application_number"),
-                      "Expires": r.get("expires")} for r in _own_rows],
-                    use_container_width=True, hide_index=True)
+                bd(bk.table(
+                    ["Mark", "Status", "Application", "Expires"],
+                    [[bk.esc(r.get("mark")), bk.esc(r.get("status")),
+                      bk.esc(r.get("application_number")),
+                      bk.esc(r.get("expires"))] for r in _own_rows]))
             else:
                 st.caption("We couldn't retrieve the individual marks just now.")
     elif marks:
-        st.subheader("Marks held")
-        st.dataframe(
-            [{"Application": m.get("application_number"),
-              "Mark": (m.get("mark") or {}).get("verbal_element_text"),
-              "Status": m.get("status"), "Expiry": m.get("expiry_date")} for m in marks],
-            use_container_width=True, hide_index=True)
+        bd('<h3 class="h3" style="margin-top:14px">Marks held</h3>'
+           + bk.table(["Application", "Mark", "Status", "Expiry"],
+                      [[bk.esc(m.get("application_number")),
+                        bk.esc((m.get("mark") or {}).get("verbal_element_text")),
+                        bk.esc(m.get("status")), bk.esc(m.get("expiry_date"))]
+                       for m in marks]))
     # The subsidiaries caveat only means something when there IS a legal
     # entity. On the trading-style path there is no company number to be
     # "this legal entity", so the note would be answering a question nobody
@@ -599,10 +612,10 @@ if _stage == "sector":
                    "there's no company portfolio to aggregate.")
 
     # ── sector intelligence (Temmy / Query Runs) ─────────────────────────
-    st.header("Sector intelligence")
-    st.caption("The register, filtered to businesses like yours: how many "
-               "protect their brand, which classes they use, and who leads. "
-               "This is real filing behaviour — not our opinion.")
+    bd(bk.sec_head(1, "Sector intelligence")
+       + '<p class="lede">The register, filtered to businesses like yours: '
+         'how many protect their brand, which classes they use, and who '
+         'leads. This is real filing behaviour &mdash; not our opinion.</p>')
     rep = None
     if not da.query_runs_ready():
         st.info("🔒 Add `TEMMY_QUERY_RUNS_API_KEY` to activate sector intelligence.")
@@ -625,11 +638,14 @@ if _stage == "sector":
         s1.metric("Trademarks in sector", f"{size.get('trademarks', 0):,}")
         s2.metric("Companies in sector", f"{size.get('companies', 0):,}")
         s3.metric("Sector first filed", rep.get("first_filed_year") or "—")
-        st.subheader("Top 3 companies in the sector")
+        bd(_h3("Top 3 companies in the sector"))
         st.caption("The most protected brands in your space. If the leaders in "
                    "your sector hold trademarks, that's the market telling you "
                    "what it takes to compete — see their actual marks below.")
-        st.dataframe(rep.get("top_companies", []), use_container_width=True, hide_index=True)
+        bd(bk.table(["Company", "Company no.", "Trademarks"],
+                    [[bk.esc(t.get("name")), bk.esc(t.get("company_number")),
+                      f'{t.get("trademarks", 0):,}']
+                     for t in (rep.get("top_companies") or [])], num_cols=(2,)))
         # item 6 — proof, not assertion: show each leader's actual trademarks.
         # Look up by COMPANY NUMBER via SQL, not by name via mark-text search:
         # data_access.company_marks says it plainly — "REST applicant search
@@ -655,9 +671,11 @@ if _stage == "sector":
                              "entity, so we can't list them here._")
                 else:
                     st.caption(f"{len(_tm)} marks on the register.")
-                    st.dataframe(_tm, use_container_width=True, hide_index=True)
+                    bd(bk.table(["Mark", "Status"],
+                                [[bk.esc(r.get("mark")), bk.esc(r.get("status"))]
+                                 for r in _tm]))
 
-        st.subheader("Class distribution")
+        bd(_h3("Class distribution"))
 
         def _cls_label(n):
             """'09 · Electronics & software' — zero-padded so chart order is numeric."""
@@ -673,7 +691,7 @@ if _stage == "sector":
     # ── benchmarking: company vs industry vs all-industry MEAN ───────────
     bench = None
     if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
-        st.header("How they compare")
+        bd(bk.sec_head(5, "How they compare"))
         st.caption("Your company against your sector's norms: how common "
                    "protection is, how much the protected hold, and at what "
                    "stage businesses like yours typically file. It answers the "
@@ -688,7 +706,7 @@ if _stage == "sector":
 
         # 1) Penetration
         pen = m["penetration_pct"]
-        st.subheader("Trademark penetration")
+        bd(_h3("Trademark penetration"))
         p1, p2 = st.columns(2)
         p1.metric("Their industry", f"{pen['industry']}%" if pen['industry'] is not None else "—",
                   delta=(f"{round(pen['industry']-pen['mean'],1)} pts vs mean"
@@ -701,7 +719,7 @@ if _stage == "sector":
 
         # 2) Trademarks per applicant
         tpa = m["trademarks_per_applicant"]
-        st.subheader("Trademarks held")
+        bd(_h3("Trademarks held"))
         t1, t2, t3 = st.columns(3)
         t1.metric("This company", tpa["company"])
         t2.metric("Industry avg / applicant", tpa["industry"])
@@ -710,7 +728,7 @@ if _stage == "sector":
         # 3) Stage of journey
         yr = m["years_to_first_filing"]
         means = bench["means"]
-        st.subheader("When they protect their brand")
+        bd(_h3("When they protect their brand"))
         frac = means.get("frac_trademark_post_incorporation")
         if frac:
             st.write(f"**{round(frac*100)}%** of companies file their first trademark "
@@ -724,19 +742,20 @@ if _stage == "sector":
                      f"industry norm of {yr['industry']} years.")
 
         # summary table
-        st.subheader("Summary")
-        st.dataframe([
-            {"Metric": "Trademark penetration (%)", "All-industry MEAN": pen["mean"],
-             "Their industry": pen["industry"], "This company": "—"},
-            {"Metric": "Trademarks (per applicant)", "All-industry MEAN": tpa["mean"],
-             "Their industry": tpa["industry"], "This company": tpa["company"]},
-            {"Metric": "Years to first filing", "All-industry MEAN": yr["mean"],
-             "Their industry": yr["industry"], "This company": yr["company"]},
-        ], use_container_width=True, hide_index=True)
+        bd(_h3("Summary"))
+        bd(bk.table(
+            ["Metric", "All-industry mean", "Their industry", "This company"],
+            [["Trademark penetration (%)", bk.esc(pen["mean"]),
+              bk.esc(pen["industry"]), "—"],
+             ["Trademarks (per applicant)", bk.esc(tpa["mean"]),
+              bk.esc(tpa["industry"]), bk.esc(tpa["company"])],
+             ["Years to first filing", bk.esc(yr["mean"]),
+              bk.esc(yr["industry"]), bk.esc(yr["company"])]],
+            num_cols=(1, 2, 3)))
 
 
     st.divider()
-    st.subheader("Now let's make this about you")
+    bd(_h3("Now let's make this about you"))
     st.markdown(
         "That's how your **industry** protects itself. The next part is "
         "specific to **your** name: how viable it is as a trademark, what "
@@ -766,7 +785,7 @@ if _stage == "input2":
                                          (sector_company or {}).get("name") or ""]) if _cand else None
     _n_sim = sum((_rr or {}).get("counts", {}).values()) if _rr else 0
 
-    st.subheader("Your classes and terms")
+    bd(_h3("Your classes and terms"))
     st.markdown(
         "Classes are the categories your protection covers. Picking them now "
         "makes the report specific — but it's the longest part, so you can "
@@ -793,7 +812,7 @@ if _stage == "input2":
 
 
         st.divider()
-        st.header("Class & term recommendations")
+        bd(bk.sec_head(2, "Class & term recommendations"))
         st.caption("Suggested Nice classes and goods/services terms for your industry, "
                    "banded by how many businesses like yours protect each: "
                    "⬛ All use this · 🟩 Most · 🟧 Some · 🟥 A few. Untick anything you "
@@ -906,7 +925,7 @@ if _stage == "input2":
                                 f"The decisions for you are the *terms* below (what, "
                                 f"specifically, you protect inside that class).")
 
-                    st.subheader("Terms within kept classes")
+                    bd(_h3("Terms within kept classes"))
                     st.caption("Classes are the shelves; terms are what you put on "
                                "them. Your registration only protects the goods and "
                                "services you actually list — so untick anything you "
@@ -982,7 +1001,7 @@ if _stage == "input2":
     import assessment as asmt
 
     st.divider()
-    st.header("Does your situation need professional help?")
+    bd(bk.sec_head(3, "Does your situation need professional help?"))
     st.caption("Three honest questions. Nothing here is rigged — every "
                "conclusion is earned by something you tell us, and if yours is "
                "a straightforward case, we'll say so.")
@@ -1022,7 +1041,7 @@ if _stage == "input2":
     st.divider()
     # ── Next step: Brand Audit (item 10) ─────────────────────────────────
     st.divider()
-    st.header("How much is it?")
+    bd(bk.sec_head(6, "How much is it?"))
     st.caption("Tell us where you trade — protection is per territory, so the "
                "jurisdictions decide the cost.")
 
@@ -1093,7 +1112,7 @@ if _kept_classes:
 risk_res = None
 _risk_subject = display_name          # trading name when in TN mode
 if da.query_runs_ready():
-    st.header("Marks like yours on the register")
+    bd(bk.sec_head(2, "Marks like yours on the register"))
     st.caption("We compare your name against live UK register data using the "
                "same rules as our paid Audit Report — status, similarity, "
                "mark type and class overlap. This is what an examiner or an "
@@ -1123,20 +1142,19 @@ if da.query_runs_ready():
            + bk.risk_chip("Medium Risk", counts.get("Medium Risk", 0))
            + bk.risk_chip("Low Risk", counts.get("Low Risk", 0))
            + '</div>')
-        st.dataframe(
-            [{"Risk": x["risk"], "Mark": x.get("verbal_element_text"),
-              "Owner": x.get("applicant_name"), "Status": x.get("status"),
-              "Type": x.get("mark_type"),
-              "Classes": ", ".join(str(c) for c in (x.get("classes") or []))}
-             for x in risk_res["marks"]],
-            use_container_width=True, hide_index=True)
+        bd(bk.table(
+            ["Risk", "Mark", "Owner", "Status", "Classes"],
+            [[bk.risk_chip(x["risk"]), bk.esc(x.get("verbal_element_text")),
+              bk.esc(x.get("applicant_name")), bk.esc(x.get("status")),
+              bk.esc(", ".join(str(c) for c in (x.get("classes") or [])))]
+             for x in risk_res["marks"]]))
         st.caption("Banded with the same rules as our Audit Report: status, "
                    "similarity to your name, mark type and overlap with the "
                    "classes your industry registers in. Lapsed marks are "
                    "excluded as negligible.")
 
 # ── Trademark Viability Score (item 4) ───────────────────────────────
-st.header("Trademark Viability Score")
+bd(bk.sec_head(1, "Trademark Viability Score"))
 st.caption("One number, built from four things we can measure: how alone "
            "your name is on the register, how protectable the wording is in "
            "law, how long you've used it, and how hard the similar marks "
@@ -1179,7 +1197,7 @@ if _v["scores"]["distinctiveness"] < 45:
 
 
 # ── sector intelligence (Temmy / Query Runs) ─────────────────────────
-st.header("Sector intelligence")
+bd(bk.sec_head(4, "Sector intelligence"))
 st.caption("The register, filtered to businesses like yours: how many "
            "protect their brand, which classes they use, and who leads. "
            "This is real filing behaviour — not our opinion.")
@@ -1199,11 +1217,14 @@ else:
     s1.metric("Trademarks in sector", f"{size.get('trademarks', 0):,}")
     s2.metric("Companies in sector", f"{size.get('companies', 0):,}")
     s3.metric("Sector first filed", rep.get("first_filed_year") or "—")
-    st.subheader("Top 3 companies in the sector")
+    bd(_h3("Top 3 companies in the sector"))
     st.caption("The most protected brands in your space. If the leaders in "
                "your sector hold trademarks, that's the market telling you "
                "what it takes to compete — see their actual marks below.")
-    st.dataframe(rep.get("top_companies", []), use_container_width=True, hide_index=True)
+    bd(bk.table(["Company", "Company no.", "Trademarks"],
+                [[bk.esc(t.get("name")), bk.esc(t.get("company_number")),
+                  f'{t.get("trademarks", 0):,}']
+                 for t in (rep.get("top_companies") or [])], num_cols=(2,)))
     # item 6 — proof, not assertion: show each leader's actual trademarks.
     # Look up by COMPANY NUMBER via SQL, not by name via mark-text search:
     # data_access.company_marks says it plainly — "REST applicant search
@@ -1229,9 +1250,11 @@ else:
                          "entity, so we can't list them here._")
             else:
                 st.caption(f"{len(_tm)} marks on the register.")
-                st.dataframe(_tm, use_container_width=True, hide_index=True)
+                bd(bk.table(["Mark", "Status"],
+                            [[bk.esc(r.get("mark")), bk.esc(r.get("status"))]
+                             for r in _tm]))
 
-    st.subheader("Class distribution")
+    bd(_h3("Class distribution"))
 
     def _cls_label(n):
         """'09 · Electronics & software' — zero-padded so chart order is numeric."""
@@ -1247,7 +1270,7 @@ else:
 # ── benchmarking: company vs industry vs all-industry MEAN ───────────
 bench = None
 if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
-    st.header("How they compare")
+    bd(bk.sec_head(5, "How they compare"))
     st.caption("Your company against your sector's norms: how common "
                "protection is, how much the protected hold, and at what "
                "stage businesses like yours typically file. It answers the "
@@ -1262,7 +1285,7 @@ if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
 
     # 1) Penetration
     pen = m["penetration_pct"]
-    st.subheader("Trademark penetration")
+    bd(_h3("Trademark penetration"))
     p1, p2 = st.columns(2)
     p1.metric("Their industry", f"{pen['industry']}%" if pen['industry'] is not None else "—",
               delta=(f"{round(pen['industry']-pen['mean'],1)} pts vs mean"
@@ -1275,7 +1298,7 @@ if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
 
     # 2) Trademarks per applicant
     tpa = m["trademarks_per_applicant"]
-    st.subheader("Trademarks held")
+    bd(_h3("Trademarks held"))
     t1, t2, t3 = st.columns(3)
     t1.metric("This company", tpa["company"])
     t2.metric("Industry avg / applicant", tpa["industry"])
@@ -1284,7 +1307,7 @@ if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
     # 3) Stage of journey
     yr = m["years_to_first_filing"]
     means = bench["means"]
-    st.subheader("When they protect their brand")
+    bd(_h3("When they protect their brand"))
     frac = means.get("frac_trademark_post_incorporation")
     if frac:
         st.write(f"**{round(frac*100)}%** of companies file their first trademark "
@@ -1298,15 +1321,16 @@ if da.query_runs_ready() and sics and (sector_company or {}).get("number"):
                  f"industry norm of {yr['industry']} years.")
 
     # summary table
-    st.subheader("Summary")
-    st.dataframe([
-        {"Metric": "Trademark penetration (%)", "All-industry MEAN": pen["mean"],
-         "Their industry": pen["industry"], "This company": "—"},
-        {"Metric": "Trademarks (per applicant)", "All-industry MEAN": tpa["mean"],
-         "Their industry": tpa["industry"], "This company": tpa["company"]},
-        {"Metric": "Years to first filing", "All-industry MEAN": yr["mean"],
-         "Their industry": yr["industry"], "This company": yr["company"]},
-    ], use_container_width=True, hide_index=True)
+    bd(_h3("Summary"))
+    bd(bk.table(
+        ["Metric", "All-industry mean", "Their industry", "This company"],
+        [["Trademark penetration (%)", bk.esc(pen["mean"]),
+          bk.esc(pen["industry"]), "—"],
+         ["Trademarks (per applicant)", bk.esc(tpa["mean"]),
+          bk.esc(tpa["industry"]), bk.esc(tpa["company"])],
+         ["Years to first filing", bk.esc(yr["mean"]),
+          bk.esc(yr["industry"]), bk.esc(yr["company"])]],
+        num_cols=(1, 2, 3)))
 
 
 # the answers they gave at input 2
@@ -1320,7 +1344,7 @@ _n_sim = sum((risk_res or {}).get("counts", {}).values()) if risk_res else 0
 import assessment as asmt
 
 st.divider()
-st.header("What your answers tell us")
+bd(bk.sec_head(5, "What your answers tell us"))
 _res, _copy = None, None
 if q1_idx is None or q3_idx is None:
     st.info("You skipped the three questions, so this part is blank. "
@@ -1329,7 +1353,7 @@ if q1_idx is None or q3_idx is None:
 if q1_idx is not None and q3_idx is not None:
     _res = asmt.score(q1_idx, q2_flags, q2_none, q3_idx)
     _copy = asmt.result_copy(_res, n_similar=_n_sim)
-    st.subheader(_copy["title"])
+    bd(_h3(_copy["title"]))
     st.markdown(_copy["body_md"])
     _b1, _b2 = st.columns(2)
     with _b1:
@@ -1402,7 +1426,7 @@ if "logged_report" not in st.session_state:
 
 # ── downloads ────────────────────────────────────────────────────────
 st.divider()
-st.header("Downloads")
+bd(bk.sec_head(7, "Downloads"))
 st.caption("Everything above as a branded document — yours to keep, share "
            "with a co-founder, or bring to the audit call.")
 # Top sector applicants' own marks (best-effort, for the report appendix).
