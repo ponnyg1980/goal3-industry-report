@@ -653,14 +653,18 @@ if _stage == "sector":
                    "business type and the whole sector view opens up.")
     else:
         if sics_from_type:
-            st.caption(f"Sector basis: **{st.session_state.get('tn_type')}** — "
-                       f"the business type you gave us (SIC {', '.join(sics)}). "
-                       f"There's no Companies House record behind this name, so "
-                       f"this is the industry you told us you're in.")
+            bd(bk.sic_block(sics, source=(
+                f"From the business type you gave us "
+                f"(<strong>{bk.esc(st.session_state.get('tn_type'))}</strong>). "
+                f"There's no Companies House record behind this name, so this "
+                f"is the industry you told us you're in.")))
         elif sector_company:
-            st.caption(f"Matched company: **{sector_company.get('name')}** "
-                       f"(no. {sector_company.get('number','—')}) · SIC {', '.join(sics)}")
-        sic = st.selectbox("Sector (SIC code)", sics)
+            bd(bk.sic_block(sics, source=(
+                f"From <strong>{bk.esc(sector_company.get('name'))}</strong>'s "
+                f"Companies House record "
+                f"(no. {bk.esc(sector_company.get('number', '—'))}).")))
+        sic = st.selectbox("Sector", sics,
+                       format_func=lambda c: bk.sic_label(c))
         rep = c_sector(sic)
         size = rep.get("size", {})
         s1, s2, s3 = st.columns(3)
@@ -871,7 +875,8 @@ if _stage == "input2":
                            f"type, as you told us — not the registered company's SIC).")
             elif len(candidates) > 1:
                 cand_names = [c["business_type"] for c in candidates]
-                options = [f"All of SIC {', '.join(sics)} (industry-wide)"] + cand_names \
+                options = [f"All of {bk.sic_label(sics[0], with_code=False)}"
+                           f" (industry-wide)"] + cand_names \
                           + ["Something else…"]
                 pick = st.selectbox(
                     "This company is a…", options, index=0,
@@ -914,7 +919,7 @@ if _stage == "input2":
                                "This SIC code doesn't describe the goods or services "
                                "specifically enough to suggest classes.")
                     for s in cr.get("inconclusive_sics", []):
-                        st.caption(f"SIC {s['sic']} — {s['reason']}")
+                        st.caption(f"{bk.sic_label(s['sic'])} — {s['reason']}")
                     st.markdown("**Better ways to get this right:**")
                     for rt in cr.get("routes", []):
                         # TODO: once the website URLs for these tools are confirmed,
@@ -926,7 +931,8 @@ if _stage == "input2":
                     st.warning("No class data for this industry.")
                 else:
                     if not chosen_type:
-                        st.caption(f"Industry = SIC {', '.join(sics)} · "
+                        st.caption(f"Industry = "
+                                   f"{bk.sic_label(sics[0], with_code=False)} · "
                                    f"{cr['total']:,} trademarks.")
                     cls_df = pd.DataFrame([{
                         "Keep": c["tier"] != "d",
@@ -1243,9 +1249,12 @@ elif not sics:
     st.warning("No SIC codes available for this company, so no sector view.")
 else:
     if sector_company:
-        st.caption(f"Matched company: **{sector_company.get('name')}** "
-                   f"(no. {sector_company.get('number','—')}) · SIC {', '.join(sics)}")
-    sic = st.selectbox("Sector (SIC code)", sics)
+        bd(bk.sic_block(sics, source=(
+        f"From <strong>{bk.esc(sector_company.get('name'))}</strong>'s "
+        f"Companies House record "
+        f"(no. {bk.esc(sector_company.get('number', '—'))}).")))
+    sic = st.selectbox("Sector", sics,
+                       format_func=lambda c: bk.sic_label(c))
     rep = c_sector(sic)
     size = rep.get("size", {})
     s1, s2, s3 = st.columns(3)
