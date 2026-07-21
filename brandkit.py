@@ -410,3 +410,94 @@ def dist_bars(items) -> str:
         f'style="width:{max(3, round(v / top * 100))}%"></span></span>'
         f'<span class="pct">{esc(f"{v:,}")}</span></div>' for k, v in items)
     return f'<div class="dist">{rows}</div>'
+
+
+# ── SIC code → what it actually means ────────────────────────────────
+# The reports were showing "SIC 69102" and expecting the reader to know
+# that means solicitors. Nobody knows their own SIC code, let alone what it
+# stands for — it's picked once at incorporation, usually by an accountant.
+# Source: the Companies House condensed SIC 2007 list (the only codes CH
+# accepts on a filing), fetched 21 Jul 2026.
+SECTIONS = {
+    "A": "Agriculture, forestry and fishing",
+    "B": "Mining and quarrying",
+    "C": "Manufacturing",
+    "D": "Electricity, gas, steam and air conditioning supply",
+    "E": "Water supply, sewerage and waste management",
+    "F": "Construction",
+    "G": "Wholesale and retail trade; repair of motor vehicles",
+    "H": "Transportation and storage",
+    "I": "Accommodation and food service activities",
+    "J": "Information and communication",
+    "K": "Financial and insurance activities",
+    "L": "Real estate activities",
+    "M": "Professional, scientific and technical activities",
+    "N": "Administrative and support service activities",
+    "O": "Public administration and defence",
+    "P": "Education",
+    "Q": "Human health and social work activities",
+    "R": "Arts, entertainment and recreation",
+    "S": "Other service activities",
+    "T": "Activities of households as employers",
+    "U": "Activities of extraterritorial organisations and bodies",
+}
+
+_SIC_CACHE: dict | None = None
+
+
+def _sic_table() -> dict:
+    global _SIC_CACHE
+    if _SIC_CACHE is None:
+        _SIC_CACHE = {}
+        path = os.path.join(HERE, "assets", "sic_descriptions.csv")
+        try:
+            with open(path, encoding="utf-8") as f:
+                next(f, None)                       # header
+                for line in f:
+                    parts = line.rstrip("\n").split("|")
+                    if len(parts) == 3:
+                        _SIC_CACHE[parts[0].strip()] = (parts[1].strip(),
+                                                        parts[2].strip())
+        except Exception:
+            pass
+    return _SIC_CACHE
+
+
+def sic_description(code) -> str | None:
+    """'Solicitors' for 69102. None if we don't recognise the code."""
+    code = str(code or "").strip()
+    row = _sic_table().get(code) or _sic_table().get(code.zfill(5))
+    return row[1] if row else None
+
+
+def sic_section(code) -> str | None:
+    """'Professional, scientific and technical activities' for 69102."""
+    code = str(code or "").strip()
+    row = _sic_table().get(code) or _sic_table().get(code.zfill(5))
+    return SECTIONS.get(row[0]) if row else None
+
+
+def sic_label(code, *, with_code: bool = True) -> str:
+    """The one-liner the reports show: 'Solicitors (SIC 69102)'."""
+    desc = sic_description(code)
+    if not desc:
+        return f"SIC {esc(code)}"
+    return f"{esc(desc)} (SIC {esc(code)})" if with_code else esc(desc)
+
+
+def sic_block(sics, *, source: str = "") -> str:
+    """A small panel naming the sector(s) this report is built on."""
+    sics = [str(s).strip() for s in (sics or []) if str(s).strip()]
+    if not sics:
+        return ""
+    rows = []
+    for c in sics:
+        section = sic_section(c)
+        rows.append(
+            f'<div class="class-row"><div class="body">'
+            f'<div class="title">{sic_label(c)}</div>'
+            f'<div class="sub">{esc(section) if section else ""}</div>'
+            f'</div></div>')
+    note = (f'<p class="muted">{source}</p>' if source else "")
+    return ('<div class="eyebrow">The sector this report is built on</div>'
+            + "".join(rows) + note)
