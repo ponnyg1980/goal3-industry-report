@@ -33,6 +33,13 @@ def _esc(x) -> str:
     return html.escape(str(x if x is not None else "—"))
 
 
+def _sic_names(sics) -> str:
+    """'Solicitors (SIC 69102)' rather than a bare number — nobody knows
+    their own SIC code, let alone what it stands for."""
+    import brandkit as bk
+    return ", ".join(bk.sic_label(c) for c in (sics or [])) or "—"
+
+
 def _risk_block(risk) -> str:
     """High/Medium/Low, as the designed components.
 
@@ -174,7 +181,7 @@ def render_recommendations(company_name, sics, selection) -> str:
     <div class="meta">Class &amp; Term Recommendations<br>Generated {today}</div>
   </div>
   <h1>{_esc(company_name)}</h1>
-  <p class="legend">Industry: SIC {_esc(', '.join(sics or []))}. How many businesses like this protect each:
+  <p class="legend">Industry: {_sic_names(sics)}. How many businesses like this protect each:
      <b style="background:#1D1D1B">All use this</b><b style="background:#2E7D32">Most use this</b>
      <b style="background:#E69500">Some use this</b><b style="background:#C0392B">A few have this</b></p>
   {body}
@@ -257,6 +264,7 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
         for m in (marks or [])[:50]) or \
         "<tr><td colspan=4 class='muted'>No marks on record.</td></tr>"
 
+    import brandkit as bk_
     sector_block = ""
     if sector and sector.get("available"):
         size = sector.get("size", {})
@@ -271,8 +279,10 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
             f"<td class='num'>{c.get('trademarks', 0):,}</td></tr>"
             for c in sector.get("class_distribution", [])[:10])
         sector_block = f"""
-        <h2>Sector intelligence — SIC {_esc(sic)}</h2>
-        <p class="muted">Sector derived from {_esc(comp_name)}'s Companies House SIC code.</p>
+        {bk_.sec_head(8, "Sector intelligence")}
+        <p class="lede">{bk_.sic_label(sic)}</p>
+        <p class="muted">Sector taken from {_esc(comp_name)}'s Companies House
+           SIC code. {_esc(bk_.sic_section(sic) or "")}</p>
         <div class="cards">
           <div class="card"><div class="big">{size.get('trademarks', 0):,}</div>
             <div class="lbl">Trademarks in sector</div></div>
