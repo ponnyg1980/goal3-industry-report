@@ -246,9 +246,15 @@ _GLOBAL_CSS = """
 [data-testid="stDecoration"] { display: none !important; }
 
 /* ---- typography -------------------------------------------------- */
-html, body, .stApp, [data-testid="stAppViewContainer"] * {
-  font-family: var(--font-body);
-}
+/* NB: do NOT use a universal selector here. Streamlit draws its icons with
+   a ligature icon font (Material Symbols), so `[data-testid=...] *` — which
+   has the same specificity as the icon's own class but comes later in the
+   sheet — wins, and every icon renders as its literal ligature TEXT
+   ("keyboard_arrow_down", "close"). The page turns into words. Set the face
+   on the root and let inheritance do the rest; icon classes then keep
+   their own font-family. */
+html, body, .stApp { font-family: var(--font-body); }
+
 .stApp h1, .stApp h2, .stApp h3,
 [data-testid="stMarkdownContainer"] h1,
 [data-testid="stMarkdownContainer"] h2,
