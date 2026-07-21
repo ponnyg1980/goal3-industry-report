@@ -209,3 +209,183 @@ def class_rows(selection) -> str:
             f'{term_html} {more}</div></div>'
             f'<div class="pct">{esc(pct)}%</div></div>')
     return "".join(rows)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# FULL INSTALL — the design applied to Streamlit itself, not just to our
+# own blocks.
+#
+# Injecting braudit.css alone is a half-install: every rule is scoped to
+# `.bd`, so our markup gets the brand while Streamlit's page background,
+# fonts, headers, metrics and tables stay default. A page that is designed
+# in patches reads worse than one that is plainly undesigned, because the
+# eye keeps finding the seam.
+#
+# So this does three things the scoped stylesheet can't:
+#   1. Loads Public Sans. The CSS names it in --font-display but never
+#      fetches it, so the display type was silently falling back to system
+#      sans — which is most of why it looked wrong.
+#   2. Applies the page surface, content width and typography to Streamlit's
+#      own containers.
+#   3. Restyles the native widgets globally (buttons, inputs, selects,
+#      radios, tables), so the bits we MUST keep as widgets — because they
+#      are interactive — stop looking like a different product.
+# ══════════════════════════════════════════════════════════════════════
+
+FONT_URL = ("https://fonts.googleapis.com/css2?"
+            "family=Public+Sans:wght@400;600;700;800&display=swap")
+
+_GLOBAL_CSS = """
+/* ---- page surface ------------------------------------------------ */
+.stApp { background: var(--page-bg); }
+[data-testid="stAppViewContainer"] > .main .block-container {
+  max-width: 1080px; padding-top: 1.6rem; padding-bottom: 3rem;
+}
+/* Streamlit's own chrome adds nothing here and breaks the illusion. */
+[data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"],
+[data-testid="stDecoration"] { display: none !important; }
+
+/* ---- typography -------------------------------------------------- */
+html, body, .stApp, [data-testid="stAppViewContainer"] * {
+  font-family: var(--font-body);
+}
+.stApp h1, .stApp h2, .stApp h3,
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3 {
+  font-family: var(--font-display); font-weight: 800;
+  color: var(--brand-navy); letter-spacing: -.4px;
+}
+.stApp p, [data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li {
+  color: var(--brand-body); font-size: 15px; line-height: 1.6;
+}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {
+  color: var(--brand-slate) !important; font-size: 12.5px !important;
+}
+
+/* ---- buttons ----------------------------------------------------- */
+.stButton > button, .stLinkButton > a, .stDownloadButton > button {
+  font-family: var(--font-display); font-weight: 800; font-size: 14px;
+  border-radius: var(--r-md); padding: 11px 20px; border: 1px solid var(--hairline);
+  background: #fff; color: var(--brand-navy); transition: all .15s ease;
+}
+.stButton > button:hover, .stLinkButton > a:hover,
+.stDownloadButton > button:hover {
+  border-color: var(--brand-navy); color: var(--brand-navy); background: #fff;
+}
+.stButton > button[kind="primary"], .stLinkButton > a[kind="primary"] {
+  background: var(--brand-pink); border-color: var(--brand-pink); color: #fff;
+}
+.stButton > button[kind="primary"]:hover,
+.stLinkButton > a[kind="primary"]:hover {
+  background: var(--brand-pink-hover); border-color: var(--brand-pink-hover);
+  color: #fff;
+}
+.stButton > button:focus:not(:active) { color: var(--brand-navy); }
+
+/* ---- inputs ------------------------------------------------------ */
+[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+[data-baseweb="select"] > div {
+  border-radius: var(--r-md) !important; border-color: var(--hairline) !important;
+  font-size: 15px !important; background: #fff !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-baseweb="select"] > div:focus-within {
+  border-color: var(--brand-navy) !important; box-shadow: none !important;
+}
+[data-testid="stWidgetLabel"] label, [data-testid="stWidgetLabel"] p {
+  font-family: var(--font-display) !important; font-weight: 700 !important;
+  font-size: 12px !important; letter-spacing: .3px; text-transform: uppercase;
+  color: var(--brand-slate) !important;
+}
+
+/* ---- radio / checkbox / multiselect ------------------------------- */
+[data-testid="stRadio"] label p, [data-testid="stCheckbox"] label p {
+  font-size: 14.5px !important; color: var(--brand-body) !important;
+  text-transform: none !important; letter-spacing: 0 !important;
+  font-weight: 400 !important; font-family: var(--font-body) !important;
+}
+[data-baseweb="tag"] { background: var(--brand-navy) !important;
+  border-radius: var(--r-sm) !important; }
+
+/* ---- tables + editors -------------------------------------------- */
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  overflow: hidden; background: #fff;
+}
+
+/* ---- expander / alerts ------------------------------------------- */
+[data-testid="stExpander"] { border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: #fff; }
+[data-testid="stExpander"] summary { font-family: var(--font-display);
+  font-weight: 700; color: var(--brand-navy); }
+[data-testid="stAlert"] { border-radius: var(--r-md); border: 1px solid var(--hairline); }
+
+/* ---- our own blocks sit on the page, not in a card ---------------- */
+.bd { background: transparent; }
+.bd .card, .bd .tbl, .bd .metric, .bd .class-row { background: var(--card-bg); }
+hr { border-color: var(--hairline) !important; }
+"""
+
+
+def install(st) -> None:
+    """Inject the font, the stylesheet and the Streamlit layer. Call once,
+    immediately after set_page_config."""
+    st.markdown(
+        f'<link rel="preconnect" href="https://fonts.googleapis.com">'
+        f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        f'<link href="{FONT_URL}" rel="stylesheet">'
+        f"<style>{css()}\n{_GLOBAL_CSS}</style>",
+        unsafe_allow_html=True)
+
+
+# ── display components (replacing st.metric / st.dataframe / st.header) ──
+def metrics(items) -> str:
+    """[(label, value), …] as `.metrics`. Streamlit's st.metric can't be
+    styled into this shape, so we render our own."""
+    cells = "".join(
+        f'<div class="metric"><div class="k">{esc(k)}</div>'
+        f'<div class="v">{esc(v)}</div></div>' for k, v in items)
+    n = max(len(list(items)), 1)
+    return (f'<div class="metrics" style="grid-template-columns:'
+            f'repeat({min(n, 4)},1fr)">{cells}</div>')
+
+
+def table(headers, rows, *, num_cols=()) -> str:
+    """`.tbl` — the designed table. `num_cols` are indexes to right-align."""
+    head = "".join(
+        f'<th class="num">{esc(h)}</th>' if i in num_cols else f'<th>{esc(h)}</th>'
+        for i, h in enumerate(headers))
+    body = []
+    for r in rows:
+        tds = "".join(
+            f'<td class="num">{c}</td>' if i in num_cols else f'<td>{c}</td>'
+            for i, c in enumerate(r))
+        body.append(f"<tr>{tds}</tr>")
+    if not body:
+        body = [f'<tr><td colspan="{len(headers)}" class="muted">'
+                f'Nothing to show.</td></tr>']
+    return (f'<div class="tbl"><table><thead><tr>{head}</tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table></div>')
+
+
+def callout(text: str, *, kind: str = "info") -> str:
+    return f'<div class="callout"><p class="p">{text}</p></div>'
+
+
+def trust(eyebrow: str, body: str) -> str:
+    return (f'<div class="trust"><div class="eyebrow">{esc(eyebrow)}</div>'
+            f'<p class="p">{body}</p></div>')
+
+
+def dist_bars(items) -> str:
+    """[(label, value), …] as the `.dist` horizontal bars."""
+    items = list(items)
+    top = max((v for _, v in items), default=1) or 1
+    rows = "".join(
+        f'<div class="d"><span class="cl">{esc(k)}</span>'
+        f'<span class="track"><span class="fill" '
+        f'style="width:{max(3, round(v / top * 100))}%"></span></span>'
+        f'<span class="pct">{esc(f"{v:,}")}</span></div>' for k, v in items)
+    return f'<div class="dist">{rows}</div>'
