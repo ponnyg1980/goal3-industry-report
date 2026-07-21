@@ -214,22 +214,11 @@ def _selection_block(selection) -> str:
         return ("<h2>Your classes &amp; terms</h2><p class='muted'>You chose to "
                 "cover classes at the audit rather than now — we'll go through "
                 "them with you then.</p>")
-    rows = []
-    for sset in selection:
-        ccol = _BAND_COLOUR.get(sset.get("band"), "#1D1D1B")
-        terms = " ".join(
-            f"<span class='term'>{_esc(t.get('term'))}</span>"
-            for t in (sset.get("terms") or [])) or \
-            "<span class='muted'>class kept; terms not itemised</span>"
-        rows.append(
-            f"<div class='clsrow'><div class='clshdr' style='color:{ccol}'>"
-            f"<span class='band' style='background:{ccol}'>"
-            f"{_esc(sset.get('band'))}</span> Class {_esc(sset.get('class'))} — "
-            f"{_esc(sset.get('heading'))}</div>"
-            f"<div class='terms'>{terms}</div></div>")
+    import brandkit as bk
     return ("<h2>Your classes &amp; terms</h2>"
             "<p class='muted'>The classes and goods/services you selected. Your "
-            "registration only protects what you list here.</p>" + "".join(rows))
+            "registration only protects what you list here.</p>"
+            + bk.class_rows(selection))
 
 
 def _assessment_block(assessment) -> str:
