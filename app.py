@@ -1079,10 +1079,14 @@ _kept_classes = st.session_state.get("kept_classes", [])
 rec_html = (br.render_recommendations(display_name, sics, _selection)
             if _selection else None)
 if _kept_classes:
-    st.success(f"Your report is tailored to the "
-               f"{len(_kept_classes)} class"
-               f"{'' if len(_kept_classes) == 1 else 'es'} you selected: "
-               + ", ".join(str(c) for c in _kept_classes) + ".")
+    # The picker stays an st.data_editor (ticking is real work and HTML can't
+    # be ticked); the designed .class-row treatment goes on the CONFIRMED
+    # selection, where it costs no interactivity.
+    bd(bk.sec_head(3, "The classes you chose"))
+    bd(bk.class_rows(_selection)
+       or f'<p class="p">Classes {", ".join(str(c) for c in _kept_classes)}.</p>')
+    bd('<p class="muted">Your registration only protects what you list here. '
+       'These are the classes and terms your report is tailored to.</p>')
 
 
 # ── marks like yours: risk overview (same rules as the Audit Report) ──
