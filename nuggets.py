@@ -12,6 +12,12 @@ figures and framing are his and must not be embellished. Two rules held here:
 Rendered as a CSS-only carousel: the animation runs client-side, so the cards
 keep cycling while Python is still building the report. No JS, so it also
 survives Streamlit's rerun model and the print-to-PDF path.
+
+The markup is Claude Design's `.build / .nuggets / .nugget` (see braudit.css);
+the timing lives in the stylesheet as fixed nth-child delays, which is why a
+set is exactly FOUR cards. The progress bar is honest: it animates over the
+same 20s the carousel runs for, so it reflects elapsed time rather than
+pretending to know a percentage of work done.
 """
 from __future__ import annotations
 
@@ -69,59 +75,32 @@ SET_ONE = NUGGETS[:4]      # while we read the register and the sector
 SET_TWO = NUGGETS[4:]      # while we tailor the report to their answers
 
 
-def carousel_html(cards=None, *, brand_pink: str = '#E51652',
-                  brand_navy: str = '#2D455A',
-                  brand_slate: str = '#617383',
-                  message: str = 'Building your report…') -> str:
-    """CSS-only rotating cards. Total cycle = len(cards) * DWELL."""
-    NUGGETS_ = cards if cards is not None else NUGGETS
-    n = len(NUGGETS_)
-    total = n * DWELL
-    # each card: fade in, hold, fade out, then stay hidden for the rest
-    frames = []
-    for i, (title, body) in enumerate(NUGGETS_):
-        start = (i / n) * 100
-        fade = 1.2 / total * 100          # ~1.2s fade
-        hold_end = start + (100 / n) - fade
-        frames.append(f"""
-@keyframes nug{i} {{
-  0%, {max(start - 0.01, 0):.3f}% {{ opacity:0; transform:translateY(8px); }}
-  {min(start + fade, 100):.3f}%   {{ opacity:1; transform:translateY(0); }}
-  {max(hold_end, 0):.3f}%          {{ opacity:1; transform:translateY(0); }}
-  {min(hold_end + fade, 100):.3f}%, 100% {{ opacity:0; transform:translateY(-8px); }}
-}}""")
-    out = []
-    for i, (title, body) in enumerate(NUGGETS_):
-        out.append(f"""
-  <div class="nug" style="animation:nug{i} {total}s ease-in-out infinite">
-    <div class="eyebrow">Did you know…</div>
-    <h3>{title}</h3>
-    <p>{body}</p>
-  </div>""")
-    return f"""
-<div class="nugwrap">
-  <div class="loader"><span></span><span></span><span></span></div>
-  <div class="loadmsg">{message}</div>
-  <div class="nugstage">{''.join(out)}</div>
-</div>
-<style>
-.nugwrap {{ text-align:center; padding:26px 10px 34px; font-family:inherit; }}
-.loader {{ display:flex; gap:7px; justify-content:center; margin-bottom:14px; }}
-.loader span {{ width:9px; height:9px; border-radius:50%;
-  background:{brand_pink}; animation:bounce 1.1s ease-in-out infinite; }}
-.loader span:nth-child(2) {{ animation-delay:.16s; opacity:.75; }}
-.loader span:nth-child(3) {{ animation-delay:.32s; opacity:.5; }}
-@keyframes bounce {{ 0%,80%,100% {{ transform:translateY(0); }}
-                     40% {{ transform:translateY(-9px); }} }}
-.loadmsg {{ color:{brand_slate}; font-size:13px; letter-spacing:.02em;
-  margin-bottom:22px; }}
-.nugstage {{ position:relative; min-height:190px; max-width:620px;
-  margin:0 auto; }}
-.nug {{ position:absolute; inset:0; opacity:0; }}
-.nug .eyebrow {{ color:{brand_pink}; font-size:11px; font-weight:700;
-  letter-spacing:.09em; text-transform:uppercase; margin-bottom:8px; }}
-.nug h3 {{ color:{brand_navy}; font-size:21px; line-height:1.25;
-  margin:0 0 10px; font-weight:700; }}
-.nug p {{ color:#3F4A55; font-size:15px; line-height:1.55; margin:0; }}
-{''.join(frames)}
-</style>"""
+import html as _html
+
+
+def _esc(x):
+    return _html.escape(str(x))
+
+
+def carousel_html(cards=None, *, message: str = 'Building your report…',
+                  **_legacy) -> str:
+    """The loading screen: one set of four 'Did you know' cards.
+
+    `**_legacy` swallows the old brand_* colour kwargs — those live in
+    braudit.css now, but an older caller must not raise on a loading screen.
+    """
+    cards = list(cards if cards is not None else NUGGETS)[:4]
+    n = len(cards) or 1
+    body = "".join(
+        f'<div class="nugget">'
+        f'<div class="tag">Did you know &middot; {i + 1}/{n}</div>'
+        f'<div class="t">{_esc(title)}</div>'
+        f'<div class="b">{_esc(text)}</div></div>'
+        for i, (title, text) in enumerate(cards))
+    dots = "".join("<i></i>" for _ in cards)
+    return (f'<div class="bd"><div class="build">'
+            f'<div class="msg">{_esc(message)}</div>'
+            f'<div class="build-progress"><i></i></div>'
+            f'<div class="nuggets">{body}</div>'
+            f'<div class="nug-dots">{dots}</div>'
+            f'</div></div>')
