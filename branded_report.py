@@ -34,82 +34,79 @@ def _esc(x) -> str:
 
 
 def _risk_block(risk) -> str:
-    """High/Medium/Low risk list — same rules and colours as the Audit
-    Report tool (risk.py vendors the Braudit rubric)."""
+    """High/Medium/Low, as the designed components.
+
+    Previously this hand-rolled `.cards/.card/.big/.lbl` and a bare <table>
+    — none of which exist in braudit.css, so the printed report fell back to
+    unstyled browser defaults while the screen looked designed. Everything
+    now goes through brandkit, so there is exactly one implementation.
+    """
     if not risk or not risk.get("marks"):
         return ""
-    from risk import RISK_COLOUR, RISK_TEXT
+    import brandkit as bk
     counts = risk.get("counts", {})
-    cards = "".join(
-        f"<div class='card'><div class='big' style='color:{RISK_COLOUR.get(b, '#617383')}'>"
-        f"{counts.get(b, 0)}</div><div class='lbl'>{_esc(b)}</div></div>"
-        for b in ("High Risk", "Medium Risk", "Low Risk"))
-    rows = "".join(
-        f"<tr><td><span class='chip' style='background:{RISK_COLOUR.get(x['risk'], '#617383')};"
-        f"color:{RISK_TEXT.get(x['risk'], '#fff')}'>{_esc(x['risk'])}</span></td>"
-        f"<td>{_esc(x.get('verbal_element_text'))}</td>"
-        f"<td>{_esc(x.get('applicant_name'))}</td>"
-        f"<td>{_esc(x.get('status'))}</td>"
-        f"<td>{_esc(', '.join(str(c) for c in (x.get('classes') or [])))}</td></tr>"
-        for x in risk["marks"])
-    return f"""
-        <h2>Marks like yours on the register</h2>
-        <p class="muted">Banded by status, similarity to the brand name, mark type and
-           class overlap with the industry — the same rules as our Audit Report.</p>
-        <div class="cards">{cards}</div>
-        <table><thead><tr><th>Risk</th><th>Mark</th><th>Owner</th><th>Status</th>
-          <th>Classes</th></tr></thead><tbody>{rows}</tbody></table>
-    """
+    return (
+        bk.sec_head(2, "Marks like yours on the register", pagebreak=True)
+        + '<p class="muted">Banded by status, similarity to the brand name, '
+          'mark type and class overlap with the industry &mdash; the same '
+          'rules as our Audit Report.</p>'
+        + '<div class="row" style="gap:8px;margin:8px 0 10px">'
+        + bk.risk_chip("High Risk", counts.get("High Risk", 0))
+        + bk.risk_chip("Medium Risk", counts.get("Medium Risk", 0))
+        + bk.risk_chip("Low Risk", counts.get("Low Risk", 0))
+        + '</div>'
+        + bk.table(["Risk", "Mark", "Owner", "Status", "Classes"],
+                   [[bk.risk_chip(x["risk"]), bk.esc(x.get("verbal_element_text")),
+                     bk.esc(x.get("applicant_name")), bk.esc(x.get("status")),
+                     bk.esc(", ".join(str(c) for c in (x.get("classes") or [])))]
+                    for x in risk["marks"]]))
 
 
 def _top_applicants_block(top_applicant_marks) -> str:
     """The sector's top trademark applicants and the marks they own."""
     if not top_applicant_marks:
         return ""
+    import brandkit as bk
     parts = []
     for company, mk in top_applicant_marks.items():
-        rows = "".join(
-            f"<tr><td>{_esc(m.get('mark'))}</td><td>{_esc(m.get('status'))}</td></tr>"
-            for m in (mk or [])) or "<tr><td colspan=2 class='muted'>—</td></tr>"
-        parts.append(f"<h3>{_esc(company)}</h3>"
-                     f"<table><thead><tr><th>Mark</th><th>Status</th></tr></thead>"
-                     f"<tbody>{rows}</tbody></table>")
-    return ("<h2>What the sector leaders protect</h2>"
-            "<p class='muted'>The top trademark applicants in this sector and "
-            "the marks they own (up to 10 each).</p>" + "".join(parts))
+        parts.append(f'<h3 class="h3" style="margin-top:14px">{_esc(company)}</h3>'
+                     + bk.table(["Mark", "Status"],
+                                [[bk.esc(m.get("mark")), bk.esc(m.get("status"))]
+                                 for m in (mk or [])]))
+    return (bk.sec_head(4, "What the sector leaders protect")
+            + '<p class="muted">The top trademark applicants in this sector '
+              'and the marks they own (up to 10 each).</p>' + "".join(parts))
 
 
 def _benchmark_block(benchmark) -> str:
     if not benchmark:
         return ""
+    import brandkit as bk
     m = benchmark.get("metrics", {})
     means = benchmark.get("means", {})
     pen = m.get("penetration_pct", {})
     tpa = m.get("trademarks_per_applicant", {})
     yr = m.get("years_to_first_filing", {})
     frac = means.get("frac_trademark_post_incorporation")
-    rows = [
-        ("Trademark penetration (%)", pen.get("mean"), pen.get("industry"), "—"),
-        ("Trademarks (per applicant)", tpa.get("mean"), tpa.get("industry"), tpa.get("company")),
-        ("Years to first filing", yr.get("mean"), yr.get("industry"), yr.get("company")),
-    ]
-    body = "".join(
-        f"<tr><td>{_esc(a)}</td><td class='num'>{_esc(b)}</td>"
-        f"<td class='num'>{_esc(c)}</td><td class='num'>{_esc(d)}</td></tr>"
-        for a, b, c, d in rows)
     note = ""
     if frac:
-        note = (f"<p class='muted'>{round(frac*100)}% of companies file their first "
-                f"trademark after incorporating; the typical company files "
-                f"{_esc(means.get('mean_years_to_first_filing'))} years into its journey.</p>")
-    return f"""
-        <h2>How they compare</h2>
-        <p class="muted">All-industry mean vs their industry (union of SIC codes) vs this company.</p>
-        {note}
-        <table><thead><tr><th>Metric</th><th class="num">All-industry mean</th>
-          <th class="num">Their industry</th><th class="num">This company</th></tr></thead>
-          <tbody>{body}</tbody></table>
-    """
+        note = (f'<p class="muted">{round(frac * 100)}% of companies file '
+                f'their first trademark after incorporating; the typical '
+                f'company files '
+                f'{_esc(means.get("mean_years_to_first_filing"))} years into '
+                f'its journey.</p>')
+    return (bk.sec_head(5, "How they compare")
+            + '<p class="muted">All-industry mean vs their industry (union of '
+              'SIC codes) vs this company.</p>' + note
+            + bk.table(
+                ["Metric", "All-industry mean", "Their industry", "This company"],
+                [["Trademark penetration (%)", _esc(pen.get("mean")),
+                  _esc(pen.get("industry")), "&mdash;"],
+                 ["Trademarks (per applicant)", _esc(tpa.get("mean")),
+                  _esc(tpa.get("industry")), _esc(tpa.get("company"))],
+                 ["Years to first filing", _esc(yr.get("mean")),
+                  _esc(yr.get("industry")), _esc(yr.get("company"))]],
+                num_cols=(1, 2, 3)))
 
 
 # Band label -> colour, derived from the shared vocabulary so the report can't
@@ -200,9 +197,10 @@ def _viability_block(viability) -> str:
         return ""
     try:
         import viability as vb
-        return ("<h2>Trademark Viability</h2>"
-                "<p class='muted'>Your brand strengths, less the pressure from "
-                "conflicting marks on the register.</p>"
+        import brandkit as bk
+        return (bk.sec_head(1, "Trademark Viability")
+                + "<p class='muted'>Your brand strengths, less the pressure "
+                  "from conflicting marks on the register.</p>"
                 + vb.gauge_html(viability))
     except Exception:
         return ""
@@ -210,14 +208,16 @@ def _viability_block(viability) -> str:
 
 def _selection_block(selection) -> str:
     """The classes and terms THEY chose — the tailored heart of the report."""
+    import brandkit as bk
     if not selection:
-        return ("<h2>Your classes &amp; terms</h2><p class='muted'>You chose to "
+        return (bk.sec_head(3, "Your classes & terms")
+                + "<p class='muted'>You chose to "
                 "cover classes at the audit rather than now — we'll go through "
                 "them with you then.</p>")
     import brandkit as bk
-    return ("<h2>Your classes &amp; terms</h2>"
-            "<p class='muted'>The classes and goods/services you selected. Your "
-            "registration only protects what you list here.</p>"
+    return (bk.sec_head(3, "Your classes & terms")
+            + "<p class='muted'>The classes and goods/services you selected. "
+              "Your registration only protects what you list here.</p>"
             + bk.class_rows(selection))
 
 
@@ -239,7 +239,8 @@ def _assessment_block(assessment) -> str:
             parts.append(f"<ul>{items}</ul>")
         else:
             parts.append(f"<p>{para}</p>")
-    return (f"<h2>{_esc(assessment.get('title',''))}</h2>" + "".join(parts))
+    import brandkit as bk
+    return (bk.sec_head(6, assessment.get("title", "")) + "".join(parts))
 
 
 def render(*, company_name, applicant, marks, sector_company=None, sector=None,
@@ -339,7 +340,7 @@ def render(*, company_name, applicant, marks, sector_company=None, sector=None,
   {_top_applicants_block(top_applicant_marks)}
   {_benchmark_block(benchmark)}
 
-  <h2>Trademarks held</h2>
+  {bk.sec_head(7, "Trademarks held")}
   <div class="tbl"><table>
     <thead><tr><th>Application</th><th>Mark</th><th>Status</th><th>Expiry</th></tr></thead>
     <tbody>{marks_rows}</tbody></table></div>
