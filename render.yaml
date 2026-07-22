@@ -1,0 +1,26 @@
+# Render blueprint — deploys the report engine API with no DNS required.
+# render.com → New → Blueprint → point at this repo. Render reads this file,
+# builds the service and hands you an HTTPS URL like
+# https://tmh-report-api.onrender.com — use that as TMH_API_BASE in WordPress.
+#
+# Secrets are NOT in this file. After the first deploy, set them in the Render
+# dashboard (Environment tab): the four keys from temmy-access/secrets.env.
+services:
+  - type: web
+    name: tmh-report-api
+    runtime: python
+    rootDir: goal3-industry-report
+    plan: free                # sleeps when idle; upgrade to keep warm
+    buildCommand: pip install -r api/requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://www.thetrademarkhelpline.com,https://thetrademarkhelpline.com
+      - key: TEMMY_API_BASE_URL
+        sync: false           # set in dashboard — never in Git
+      - key: TEMMY_API_KEY
+        sync: false
+      - key: TEMMY_QUERY_RUNS_API_KEY
+        sync: false
+      - key: COMPANIES_HOUSE_API_KEY
+        sync: false
