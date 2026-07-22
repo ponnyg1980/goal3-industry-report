@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+web/
+design/
+br-009-parked/
+*.md
