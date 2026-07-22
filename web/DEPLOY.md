@@ -32,10 +32,47 @@ the internal tool while the public pages run off the API.
 
 ---
 
-## Step 1 — Deploy the API to Cloud Run
+## No DNS yet? You are not blocked.
 
-You have DNS; you need a place to run the container. Cloud Run is the cheapest
-fit (scales to zero, ~£0 when idle). From the repo root:
+The `api.thetrademarkhelpline.com` subdomain is **cosmetic**. The page calls
+the API from the visitor's browser in the background — nobody ever sees the
+URL. Every Python host gives you a working HTTPS address the moment you deploy
+(`something.onrender.com`, `something.run.app`, …). Point the page at *that*,
+ship, and swap in the pretty subdomain later by changing one line — no
+re-deploy of the page needed.
+
+What each piece actually needs:
+
+| Piece | Needs | Have it? |
+|---|---|---|
+| The page (`report.html` + assets) | **WP-Admin only** | ✅ yes |
+| The API (Python) | *any* Python host — **DNS not required** | one signup |
+
+So the single outstanding thing is somewhere to run the Python. WP-Admin can't
+(WordPress is PHP), but the host's default HTTPS URL is enough.
+
+### Easiest Python hosts (pick one — all give HTTPS, none need DNS)
+
+- **Render** (render.com) — connect the GitHub repo, "New Web Service", root
+  `goal3-industry-report`, start command
+  `uvicorn api.main:app --host 0.0.0.0 --port $PORT`. Free tier sleeps when
+  idle (first hit after a nap is slow); ~£6/mo keeps it warm.
+- **Railway** (railway.app) — same idea, deploy from repo, add the env vars.
+- **Google Cloud Run** — the command below; scales to zero, effectively free,
+  but needs a Google Cloud signup.
+
+Whichever you choose, set the same env vars (keys from
+`temmy-access/secrets.env`) plus
+`CORS_ORIGINS=https://www.thetrademarkhelpline.com,https://thetrademarkhelpline.com`.
+Then confirm `GET <host>/health` returns `{"ok": true, "sector": true}` and
+use that host URL as `TMH_API_BASE` in Step 2.
+
+---
+
+## Step 1 (optional, later) — Cloud Run with the pretty subdomain
+
+Only when Cloudflare/DNS access is back. Cloud Run is the cheapest fit
+(scales to zero, ~£0 when idle). From the repo root:
 
 ```bash
 gcloud run deploy tmh-report-api \
@@ -74,17 +111,23 @@ The page is one file and depends only on `braudit.css` + `brand/` + the API.
 2. **Create the page.** New WordPress page, title *Industry Trademark Report*,
    permalink `/industry-report/`. In Elementor add an **HTML widget** (or a
    Gutenberg **Custom HTML** block) and paste the contents of `report.html`.
-3. **Set the three URLs** by adding this *above* the pasted markup:
+3. **Set the three URLs** by adding this *above* the pasted markup. Use your
+   host's URL for `TMH_API_BASE` — the `.onrender.com` / `.run.app` address is
+   fine; it does not have to be the subdomain:
 
    ```html
    <script>
-     window.TMH_API_BASE = "https://api.thetrademarkhelpline.com";
+     // Whatever your Python host gave you. Swap for the subdomain later.
+     window.TMH_API_BASE = "https://tmh-report-api.onrender.com";
      window.TMH_ASSETS   = "https://www.thetrademarkhelpline.com/wp-content/uploads/tmh/brand";
    </script>
    ```
 
    and change the `<link rel="stylesheet" href="./braudit.css">` line in the
    markup to the uploaded stylesheet's URL.
+
+   **When DNS comes back:** change `TMH_API_BASE` to
+   `https://api.thetrademarkhelpline.com` and save the page. Nothing else moves.
 
 That's it — the page renders inside your normal header/footer, because it's a
 normal page. The report itself sits in the `.bd` scope so it won't fight
