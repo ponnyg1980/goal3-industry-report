@@ -135,6 +135,15 @@ def terms(sics: str, cls: int):
     return rec.term_recommendations([s for s in sics.split(",") if s], cls)
 
 
+# ── benchmark: "how you compare" (mean / sector / this company) ──────
+@app.get("/benchmark")
+def benchmark(sics: str, number: str = ""):
+    """da.benchmark — sector penetration vs all-industry mean, trademarks
+    per applicant, and years-to-first-filing, each with an ahead/behind
+    verdict. Powers the report's 'How you compare' section."""
+    return da.benchmark(number, [s for s in sics.split(",") if s])
+
+
 # ── 4. viability (dials) — JSON scores + the rendered CSS gauge ───────
 class ViabilityReq(BaseModel):
     name: str
