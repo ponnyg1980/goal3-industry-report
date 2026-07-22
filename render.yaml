@@ -9,7 +9,7 @@ services:
   - type: web
     name: tmh-report-api
     runtime: python
-    rootDir: goal3-industry-report
+    # Engine files live at the repo ROOT (app.py, api/, etc.) — no subdir.
     plan: free                # sleeps when idle; upgrade to keep warm
     buildCommand: pip install -r api/requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
