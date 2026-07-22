@@ -1,0 +1,259 @@
+<!--
+  Industry Trademark Report — native page for thetrademarkhelpline.com.
+
+  This is the "web pages hosted on the domain" answer (architecture C). It is a
+  single self-contained file: no build step, no framework, no Streamlit. It
+  loads braudit.css (the same stylesheet the app uses, so screen and page can't
+  drift) and calls the report engine over the JSON API. Drop it into a
+  WordPress page as a Custom HTML block, or serve it as a standalone file.
+
+  Two knobs at the top of the script: API_BASE (where the engine lives) and the
+  asset URLs. Everything else renders itself from the API responses.
+-->
+<div id="tmh-report" class="bd">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./braudit.css">
+
+  <div class="tmh-wrap">
+    <!-- persistent header -->
+    <div class="between tmh-head">
+      <div class="row" style="gap:12px;align-items:center">
+        <img id="tmh-logo" alt="The Trademark Helpline" style="height:34px">
+        <span class="muted" id="tmh-subject"></span>
+      </div>
+      <span class="eyebrow" id="tmh-stage">Free sector report</span>
+    </div>
+
+    <!-- screens: only one is visible at a time -->
+    <section id="scr-input" class="tmh-screen"></section>
+    <section id="scr-build" class="tmh-screen" hidden></section>
+    <section id="scr-reveal1" class="tmh-screen" hidden></section>
+  </div>
+</div>
+
+<style>
+  #tmh-report .tmh-wrap { max-width: 1080px; margin: 0 auto; padding: 8px 16px 48px; }
+  #tmh-report .tmh-head { padding: 6px 0 14px; border-bottom: 1px solid var(--hairline); margin-bottom: 20px; }
+  #tmh-report .tmh-field { width: 100%; font-size: 16px; padding: 13px 15px; border: 1px solid var(--hairline);
+    border-radius: var(--r-md); font-family: var(--font-body); }
+  #tmh-report .tmh-field:focus { outline: none; border-color: var(--brand-navy); }
+  #tmh-report .pick { border:1px solid var(--hairline); border-radius: var(--r-md); padding: 12px 14px;
+    cursor: pointer; margin-top: 8px; transition: border-color .12s ease, background .12s ease; }
+  #tmh-report .pick:hover { border-color: var(--brand-navy); background: #FBFCFD; }
+  #tmh-report .pick.sel { border-color: var(--brand-navy); background: #F7FAFC; }
+  #tmh-report .pick .pk-name { font-weight: 800; color: var(--brand-navy); }
+  #tmh-report .pick .pk-meta { font-size: 12px; color: var(--brand-slate); }
+  #tmh-report .spin { display:inline-block; width:16px; height:16px; border:2px solid var(--hairline);
+    border-top-color: var(--brand-pink); border-radius:50%; animation: tmh-spin .8s linear infinite; vertical-align:-3px; }
+  @keyframes tmh-spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+(function () {
+  // ── configuration ──────────────────────────────────────────────────
+  // Point these at wherever the API and assets are hosted. Defaults assume
+  // the API on api.thetrademarkhelpline.com and assets served beside this file.
+  var API_BASE = (window.TMH_API_BASE || "https://api.thetrademarkhelpline.com").replace(/\/$/, "");
+  var ASSETS   = (window.TMH_ASSETS   || "./brand");
+
+  var root = document.getElementById("tmh-report");
+  var elLogo = document.getElementById("tmh-logo");
+  var elSubject = document.getElementById("tmh-subject");
+  var elStage = document.getElementById("tmh-stage");
+  elLogo.src = ASSETS + "/logo.svg";
+
+  var screens = {
+    input:  document.getElementById("scr-input"),
+    build:  document.getElementById("scr-build"),
+    reveal1:document.getElementById("scr-reveal1")
+  };
+  function show(name) {
+    Object.keys(screens).forEach(function (k) { screens[k].hidden = (k !== name); });
+    root.scrollIntoView({ behavior: "instant", block: "start" });
+  }
+  function esc(s) { var d = document.createElement("div"); d.textContent = (s == null ? "" : s); return d.innerHTML; }
+  function api(path, opts) {
+    return fetch(API_BASE + path, opts).then(function (r) {
+      if (!r.ok) throw new Error("api " + r.status); return r.json();
+    });
+  }
+
+  var state = { candidate: null, sic: null };
+
+  // ── SCREEN 1 · who are you ─────────────────────────────────────────
+  function renderInput() {
+    elStage.textContent = "Free sector report";
+    screens.input.innerHTML =
+      '<div class="eyebrow">Step 1 of 2</div>' +
+      '<h1 class="h1">Who are you?</h1>' +
+      '<p class="lede">Type your registered company name, or the name your ' +
+      'trademarks are held in. We search Companies House and the UK trademark ' +
+      'register together, so either works.</p>' +
+      '<input class="tmh-field" id="q" placeholder="e.g. Greggs Plc" autocomplete="off">' +
+      '<div id="results" style="margin-top:10px"></div>' +
+      '<div id="go-wrap" style="margin-top:18px" hidden>' +
+      '  <button class="btn btn-primary btn-block" id="go">See how my industry protects itself &rarr;</button>' +
+      '</div>';
+    var q = document.getElementById("q");
+    var results = document.getElementById("results");
+    var goWrap = document.getElementById("go-wrap");
+    var timer = null;
+
+    q.addEventListener("input", function () {
+      state.candidate = null; goWrap.hidden = true;
+      var val = q.value.trim();
+      clearTimeout(timer);
+      if (val.length < 3) { results.innerHTML = ""; return; }
+      results.innerHTML = '<p class="muted"><span class="spin"></span> Checking Companies House and the trademark register…</p>';
+      timer = setTimeout(function () {
+        api("/find?q=" + encodeURIComponent(val)).then(function (data) {
+          if (!data.candidates.length) {
+            results.innerHTML = '<div class="callout"><p class="p">We couldn\'t find that on ' +
+              'Companies House or the trademark register. Check the spelling, or ' +
+              'try the full registered name.</p></div>';
+            return;
+          }
+          results.innerHTML = data.candidates.map(function (c, i) {
+            return '<div class="pick" data-i="' + i + '">' +
+              '<div class="pk-name">' + esc(c.name) + '</div>' +
+              '<div class="pk-meta">' + esc(c.label.replace(c.name, "").replace(/^\s*[·—-]\s*/, "")) + '</div></div>';
+          }).join("");
+          Array.prototype.forEach.call(results.querySelectorAll(".pick"), function (el) {
+            el.addEventListener("click", function () {
+              Array.prototype.forEach.call(results.querySelectorAll(".pick"), function (p) { p.classList.remove("sel"); });
+              el.classList.add("sel");
+              state.candidate = data.candidates[+el.getAttribute("data-i")];
+              goWrap.hidden = false;
+            });
+          });
+        }).catch(function () {
+          results.innerHTML = '<p class="muted">Something went wrong searching. Please try again.</p>';
+        });
+      }, 350);
+    });
+
+    document.getElementById("go").addEventListener("click", startBuild);
+  }
+
+  // ── SCREEN 2 · build (CSS-only carousel) ───────────────────────────
+  var NUGGETS = {
+    one: [
+      ["Your brand is an asset in its own right", "Trademarks are saleable assets. A brand can hold value entirely separately from the company that uses it — and as the registered owner, that asset is yours."],
+      ["You don't have to own it through your company", "Some people register trademarks in their own personal name, or in trust, and licence it back to their company — protecting the brand if the company ever becomes insolvent."],
+      ["It's how the big platforms verify you", "Google, Amazon and eBay use trademark registrations to confirm you have the right to use a name, logo or tagline. Without one, proving it is a great deal harder."],
+      ["It isn't only names", "A trademark can be a logo, a tagline, a sound — even a smell. If it identifies you to your customers, it may be protectable."]
+    ]
+  };
+  function buildScreen(setKey, message) {
+    var cards = NUGGETS[setKey];
+    var n = cards.length;
+    var nug = cards.map(function (c, i) {
+      return '<div class="nugget"><div class="tag">Did you know · ' + (i + 1) + '/' + n + '</div>' +
+        '<div class="t">' + esc(c[0]) + '</div><div class="b">' + esc(c[1]) + '</div></div>';
+    }).join("");
+    var dots = cards.map(function () { return "<i></i>"; }).join("");
+    screens.build.innerHTML = '<div class="build"><div class="msg">' + esc(message) + '</div>' +
+      '<div class="build-progress"><i></i></div><div class="nuggets">' + nug + '</div>' +
+      '<div class="nug-dots">' + dots + '</div></div>';
+  }
+
+  function startBuild() {
+    show("build");
+    buildScreen("one", "Reading the register, your sector and Companies House…");
+    var c = state.candidate;
+    // Resolve the sector: from the CH company's SIC, else the register-only
+    // owner has no SIC and we ask for a business type (kept simple here — the
+    // full flow adds that input; this slice takes the first SIC we can get).
+    var sicPromise;
+    if (c.company_number && c.sic_codes && c.sic_codes.length) {
+      sicPromise = Promise.resolve(c.sic_codes[0]);
+    } else if (c.company_number) {
+      sicPromise = api("/company/" + encodeURIComponent(c.company_number))
+        .then(function (p) { return (p.sic_codes || [])[0]; });
+    } else {
+      sicPromise = Promise.resolve(null);
+    }
+    sicPromise.then(function (sic) {
+      state.sic = sic;
+      if (!sic) { renderReveal1(c, null); return; }
+      return api("/sector?sic=" + encodeURIComponent(sic)).then(function (sec) {
+        renderReveal1(c, sec);
+      });
+    }).catch(function () { renderReveal1(c, null); });
+  }
+
+  // ── SCREEN 3 · reveal 1 (sector one-pager) ─────────────────────────
+  function metric(k, v) {
+    return '<div class="metric"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div></div>';
+  }
+  function tbl(headers, rows, numCols) {
+    numCols = numCols || [];
+    var head = headers.map(function (h, i) { return '<th' + (numCols.indexOf(i) > -1 ? ' class="num"' : '') + '>' + esc(h) + '</th>'; }).join("");
+    var body = rows.length ? rows.map(function (r) {
+      return "<tr>" + r.map(function (c, i) { return '<td' + (numCols.indexOf(i) > -1 ? ' class="num"' : '') + '>' + c + '</td>'; }).join("") + "</tr>";
+    }).join("") : '<tr><td colspan="' + headers.length + '" class="muted">Nothing to show.</td></tr>';
+    return '<div class="tbl"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  function renderReveal1(c, sec) {
+    elStage.textContent = "Free sector report";
+    elSubject.textContent = "· " + c.name;
+    var onRegister = (c.n_marks > 0) ? "Yes" : "No";
+
+    var html =
+      '<div class="row hero" style="align-items:stretch;gap:20px">' +
+        '<div style="flex:1.35;display:flex;flex-direction:column;justify-content:center;gap:8px">' +
+          '<div class="eyebrow">Free sector report</div>' +
+          '<h1 class="h1">How does ' + esc(c.name) + '&rsquo;s industry protect itself?</h1>' +
+          '<p class="lede">Real filing behaviour from the UK register — not our opinion. Your tailored report comes next.</p>' +
+        '</div>' +
+        '<div style="flex:1;min-width:240px"><div class="well is-video"><div class="inner">' +
+          '<span class="ratio">16:9 · QUOTE</span><div class="play"></div>' +
+          '<div class="quote">&ldquo;By failing to prepare, you are preparing to fail.&rdquo; ' +
+          '<span class="fact">Our success rate on UK registrations over the past 12 months is 98%.</span></div>' +
+          '<div class="who">Jonathan Paton — Founder &amp; MD</div>' +
+        '</div></div></div>' +
+      '</div>' +
+      '<div class="metrics" style="margin-top:16px">' +
+        metric("Trademarks held", c.n_marks || 0) +
+        metric("Company no.", c.company_number || "—") +
+        metric("On the register", onRegister) +
+      '</div>';
+
+    if (sec && sec.available) {
+      html += '<div class="sec-head" style="margin-top:26px"><span class="num">1</span><h2 class="h2">' +
+        esc(sec.sic_label) + '</h2></div>' +
+        '<p class="muted">' + esc(sec.sic_section || "") + '</p>' +
+        '<div class="metrics" style="margin-top:12px">' +
+          metric("Trademarks in sector", (sec.size.trademarks || 0).toLocaleString()) +
+          metric("Companies in sector", (sec.size.companies || 0).toLocaleString()) +
+          metric("Sector first filed", sec.first_filed_year || "—") +
+        '</div>';
+      var tops = (sec.top_companies || []).slice(0, 3).map(function (t) {
+        return [esc(t.name), esc(t.company_number || "—"), (t.trademarks || 0).toLocaleString()];
+      });
+      html += '<h3 class="h3" style="margin-top:18px">Top companies in the sector</h3>' +
+        tbl(["Company", "Company no.", "Trademarks"], tops, [2]);
+    } else {
+      html += '<div class="callout" style="margin-top:20px"><p class="p">We don\'t have an industry for ' +
+        'this name yet — the full report will ask for the business type and open up the whole sector view.</p></div>';
+    }
+
+    html += '<div class="cta-block" style="margin-top:26px">' +
+      '<a class="btn btn-primary btn-block" href="#" id="tailored">Get my tailored report &rarr;</a></div>' +
+      '<p class="muted" style="text-align:center;margin-top:6px">Takes about a minute. No email required.</p>';
+
+    screens.reveal1.innerHTML = html;
+    show("reveal1");
+    document.getElementById("tailored").addEventListener("click", function (e) {
+      e.preventDefault();
+      // Screen 4+ (input 2, build 2, reveal 2) is the next slice; for now this
+      // is where the free page hands off to the tailored journey.
+      alert("Next: the tailored report (input 2 → reveal 2). Wiring in the next build.");
+    });
+  }
+
+  renderInput();
+})();
+</script>
