@@ -40,6 +40,7 @@ import resolve as rsv               # noqa: E402
 import viability as vb              # noqa: E402
 import assessment as asmt           # noqa: E402
 import brandkit as bk               # noqa: E402
+import risk as rsk                  # noqa: E402
 
 app = FastAPI(title="TMH Report Engine", version="1.0")
 
@@ -142,6 +143,43 @@ def benchmark(sics: str, number: str = ""):
     per applicant, and years-to-first-filing, each with an ahead/behind
     verdict. Powers the report's 'How you compare' section."""
     return da.benchmark(number, [s for s in sics.split(",") if s])
+
+
+# ── similar marks: conflict counts + the marks like this name ────────
+@app.get("/similar")
+def similar(name: str, classes: str = ""):
+    """risk.assess over data_access.similar_marks — the register rows whose
+    verbal element could conflict with `name`, banded High/Medium/Low with
+    own marks excluded. Powers Reveal 2's viability dials (conflict drag) and
+    the 'marks like yours on the register' table.
+
+    `classes` is an optional comma list of the user's kept Nice classes; a
+    similar mark in the SAME class scores higher than one in a distant class.
+    """
+    if len((name or "").strip()) < 2:
+        return {"counts": {}, "marks": [], "total_candidates": 0}
+    rows = da.similar_marks(name, limit=300)
+    tcls = [int(c) for c in classes.split(",") if c.strip().isdigit()]
+    res = rsk.assess(rows, brand=name, target_classes=tcls, limit=25)
+    marks = [{
+        "mark": r.get("verbal_element_text") or "",
+        "owner": r.get("applicant_name") or "—",
+        "classes": r.get("classes") or [],
+        "status": r.get("status") or "",
+        "risk": r.get("risk") or "",
+        "score": r.get("score"),
+    } for r in res.get("marks", [])]
+    c = res.get("counts", {})
+    return {
+        "counts": {
+            "high": c.get("High Risk", 0),
+            "medium": c.get("Medium Risk", 0),
+            "low": c.get("Low Risk", 0),
+            "negligible": c.get("Negligible", 0),
+        },
+        "marks": marks,
+        "total_candidates": res.get("total_candidates", 0),
+    }
 
 
 # ── 4. viability (dials) — JSON scores + the rendered CSS gauge ───────
