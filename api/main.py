@@ -147,7 +147,7 @@ def benchmark(sics: str, number: str = ""):
 
 # ── similar marks: conflict counts + the marks like this name ────────
 @app.get("/similar")
-def similar(name: str, classes: str = ""):
+def similar(name: str, classes: str = "", own: str = ""):
     """risk.assess over data_access.similar_marks — the register rows whose
     verbal element could conflict with `name`, banded High/Medium/Low with
     own marks excluded. Powers Reveal 2's viability dials (conflict drag) and
@@ -155,12 +155,16 @@ def similar(name: str, classes: str = ""):
 
     `classes` is an optional comma list of the user's kept Nice classes; a
     similar mark in the SAME class scores higher than one in a distant class.
+    `own` is the applicant/company name(s) to exclude — so an owner already on
+    the register isn't shown as a conflict against itself.
     """
     if len((name or "").strip()) < 2:
         return {"counts": {}, "marks": [], "total_candidates": 0}
     rows = da.similar_marks(name, limit=300)
     tcls = [int(c) for c in classes.split(",") if c.strip().isdigit()]
-    res = rsk.assess(rows, brand=name, target_classes=tcls, limit=25)
+    owns = [o.strip() for o in own.split("|") if o.strip()]
+    res = rsk.assess(rows, brand=name, target_classes=tcls,
+                     own_applicant_names=owns, limit=25)
     marks = [{
         "mark": r.get("verbal_element_text") or "",
         "owner": r.get("applicant_name") or "—",
