@@ -16,7 +16,7 @@ from __future__ import annotations
 
 LINKS = {
     'enquiry': 'https://www.thetrademarkhelpline.com/make-an-enquiry/',
-    'talk': 'https://link.cerebrumai.io/widget/booking/ZArxD6BnggpV7bsSF0ks',
+    'talk': 'https://ghl.thetrademarkhelpline.com/widget/booking/ZArxD6BnggpV7bsSF0ks',
     'audit': 'https://www.thetrademarkhelpline.com/request-brand-audit/',
 }
 
