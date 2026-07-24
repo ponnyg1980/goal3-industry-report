@@ -123,6 +123,35 @@ def sector(sic: str):
     return rep
 
 
+@app.get("/industries")
+def industries(q: str = "", limit: int = 12):
+    """Search the SIC catalogue by plain-English description → the 'confirm
+    your industry' picker on Input 1.
+
+    Companies House SICs are frequently generic, stale, or simply absent
+    (overseas applicants, sole traders, trading names). Letting a visitor
+    confirm or correct their industry means the sector report benchmarks
+    against the RIGHT peer group, not whatever code the register happens to
+    hold. Each result maps 1:1 to a SIC the sector engine already understands.
+    """
+    ql = (q or "").strip().lower()
+    if len(ql) < 2:
+        return {"industries": []}
+    tbl = bk._sic_table()                 # {code: (section_letter, description)}
+    hits = []
+    for code, row in tbl.items():
+        desc = row[1]
+        pos = desc.lower().find(ql)
+        if pos < 0:
+            continue
+        # earlier match + shorter description rank higher (tighter relevance)
+        hits.append(((0 if desc.lower().startswith(ql) else 1, pos, len(desc)),
+                     {"sic": code, "label": desc, "section": bk.sic_section(code)}))
+    hits.sort(key=lambda h: h[0])
+    n = max(1, min(int(limit or 12), 30))
+    return {"industries": [h[1] for h in hits[:n]]}
+
+
 # ── 3. recommendations ───────────────────────────────────────────────
 @app.get("/classes")
 def classes(sics: str = "", business_type: str = ""):
