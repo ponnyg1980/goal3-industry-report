@@ -65,6 +65,7 @@ def find(name: str, *, limit: int = 10) -> list[dict]:
             "key": key, "display_name": h.get("title"),
             "company_number": num or None, "status": h.get("status"),
             "sic_codes": h.get("sic_codes") or [],
+            "address": h.get("address"), "postcode": h.get("postcode"),
             "n_marks": 0, "ipo_identifiers": [],
             "on_ch": True, "on_register": False,
             "norm": _norm(h.get("title")),
