@@ -243,6 +243,33 @@ def company_sic(company_number: str):
     return rows[0] if rows else None
 
 
+def company_sics_bulk(numbers):
+    """SIC codes for many company numbers in ONE query — used to enrich the
+    Companies House search list (CH search doesn't return SICs). Returns
+    {company_number: [sic, ...]}."""
+    nums = []
+    for x in (numbers or []):
+        n = re.sub(r"[^0-9A-Za-z]", "", str(x or ""))
+        if n:
+            nums.append(n)
+    nums = list(dict.fromkeys(nums))            # dedupe, keep order
+    if not nums:
+        return {}
+    inlist = ",".join("'" + n + "'" for n in nums)
+    try:
+        rows = run_sql(f"SELECT number, sic_codes FROM companies "
+                       f"WHERE number IN ({inlist})")
+    except Exception:
+        return {}
+    out = {}
+    for r in (rows or []):
+        sc = r.get("sic_codes")
+        if isinstance(sc, str):
+            sc = [p for p in re.split(r"[^0-9]+", sc) if p]
+        out[str(r.get("number"))] = sc or []
+    return out
+
+
 def applicant_sic(ipo_identifier):
     """Bridge a looked-up applicant (from company search) to its company
     record + SIC codes, so the app can go name → sector in one hop."""
