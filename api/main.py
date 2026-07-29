@@ -67,12 +67,31 @@ def find(q: str):
     Returns the four scenarios (both / ch_only / register_only / none)."""
     if len((q or "").strip()) < 3:
         return {"candidates": []}
+    cands = rsv.find(q, limit=10)
+    # CH search doesn't return SICs — backfill them for the whole list in one
+    # query so the picker can show the sector, which (with the postcode) helps
+    # the visitor pick the right organisation.
+    nums = [c.get("company_number") for c in cands if c.get("company_number")]
+    try:
+        sics_by_num = da.company_sics_bulk(nums)
+    except Exception:
+        sics_by_num = {}
     out = []
-    for c in rsv.find(q, limit=10):
+    for c in cands:
+        sics = c.get("sic_codes") or []
+        num = c.get("company_number")
+        if not sics and num:
+            key = "".join(ch for ch in str(num) if ch.isalnum())
+            sics = sics_by_num.get(key) or sics_by_num.get(str(num)) or []
+        sic1 = str(sics[0]) if sics else None
         out.append({
             "key": c.get("key"), "name": c.get("display_name"),
-            "company_number": c.get("company_number"),
-            "status": c.get("status"), "sic_codes": c.get("sic_codes") or [],
+            "company_number": num,
+            "status": c.get("status"), "sic_codes": sics,
+            "sic": sic1,
+            "sic_desc": bk.sic_description(sic1) if sic1 else None,
+            "postcode": c.get("postcode"),
+            "address": c.get("address"),
             "n_marks": c.get("n_marks", 0),
             "ipo_identifiers": c.get("ipo_identifiers") or [],
             "scenario": c.get("scenario"), "label": rsv.label(c)})
