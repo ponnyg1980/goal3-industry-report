@@ -56,11 +56,13 @@ def search(name: str, *, limit: int = 10):
         return []
     out = []
     for it in d.get("items", []):
+        addr = it.get("address") if isinstance(it.get("address"), dict) else {}
         out.append({
             "company_number": it.get("company_number"),
             "title": it.get("title"),
             "status": it.get("company_status"),
             "address": it.get("address_snippet"),
+            "postcode": addr.get("postal_code"),
         })
     return out
 
