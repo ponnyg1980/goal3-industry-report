@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -428,17 +430,96 @@ def benchmark(company_number: str, sics) -> dict:
     }
 
 
+# ── Sector report + its cache ────────────────────────────────────────
+# Sector aggregates are the most-read, slowest-moving thing we serve: how
+# many marks and companies sit in a SIC barely shifts week to week. They are
+# also the ONLY part of the free report that needs Query Runs — industry
+# labels come from our own 731-row SIC table and class/term recommendations
+# from the local freesearch modules, so neither is at risk here.
+#
+# Two deliberate choices:
+#
+#  1. NO query_runs_ready() PROBE. It fired a `SELECT 1` before every report,
+#     doubling round-trips and — worse — turning one transient blip into a
+#     total failure, because a probe timeout suppressed the whole section
+#     even when the real queries would have succeeded.
+#
+#  2. STALE-WHILE-ERROR. On failure we serve the last good result rather than
+#     nothing. A visitor should never be shown a degraded report because the
+#     upstream hiccuped for a few seconds. Staleness is marked so the caller
+#     can tell, but sector figures a day old are indistinguishable to a
+#     reader and infinitely better than a blank panel.
+#
+# The disk tier matters on Render: the free plan restarts the process when it
+# sleeps, which would empty an in-memory cache and expose the cold start to
+# the first visitor. /tmp survives for the life of the instance.
+
+_SECTOR_TTL = 24 * 3600                      # aggregates move slowly
+_SECTOR_MEM: dict = {}                       # sic -> (fetched_at, payload)
+_SECTOR_DIR = os.path.join(tempfile.gettempdir(), "tmh_sector_cache")
+
+
+def _sector_disk_path(key: str) -> str:
+    return os.path.join(_SECTOR_DIR, f"{key}.json")
+
+
+def _sector_cache_get(key: str):
+    """Most recent cached payload for a SIC, or None. Ignores TTL —
+    freshness is the caller's decision so it can serve stale on error."""
+    hit = _SECTOR_MEM.get(key)
+    if hit:
+        return hit
+    try:
+        with open(_sector_disk_path(key), encoding="utf-8") as f:
+            blob = json.load(f)
+        hit = (blob["fetched_at"], blob["payload"])
+        _SECTOR_MEM[key] = hit
+        return hit
+    except Exception:
+        return None
+
+
+def _sector_cache_put(key: str, payload: dict) -> None:
+    now = time.time()
+    _SECTOR_MEM[key] = (now, payload)
+    try:
+        os.makedirs(_SECTOR_DIR, exist_ok=True)
+        tmp = _sector_disk_path(key) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"fetched_at": now, "payload": payload}, f)
+        os.replace(tmp, _sector_disk_path(key))   # atomic
+    except Exception:
+        pass                                      # cache is best-effort
+
+
 def sector_report(sic: str) -> dict:
-    if not query_runs_ready():
+    key = _safe_sic(sic)
+    cached = _sector_cache_get(key)
+    if cached and (time.time() - cached[0]) < _SECTOR_TTL:
+        return cached[1]
+
+    try:
+        sql = _sector_sql(sic)
+        out = {"available": True, "sic": key}
+        size = run_sql(sql["size"]);        out["size"] = size[0] if size else {}
+        ff = run_sql(sql["first_filed"]);   out["first_filed_year"] = ff[0].get("yr") if ff else None
+        out["top_companies"] = run_sql(sql["top_companies"])
+        out["class_distribution"] = run_sql(sql["class_distribution"])
+        # An empty size row means the query "succeeded" but returned nothing —
+        # treat as failure so we fall through to the cache instead of caching
+        # a hollow report that renders as a broken panel.
+        if not out.get("size"):
+            raise RuntimeError("sector size query returned no rows")
+        _sector_cache_put(key, out)
+        return out
+    except Exception as exc:
+        if cached:
+            stale = dict(cached[1])
+            stale["stale"] = True
+            stale["stale_age_seconds"] = int(time.time() - cached[0])
+            return stale
         return {"available": False,
-                "reason": "Query Runs key not authorised."}
-    sql = _sector_sql(sic)
-    out = {"available": True, "sic": _safe_sic(sic)}
-    size = run_sql(sql["size"]);            out["size"] = size[0] if size else {}
-    ff = run_sql(sql["first_filed"]);       out["first_filed_year"] = ff[0].get("yr") if ff else None
-    out["top_companies"] = run_sql(sql["top_companies"])
-    out["class_distribution"] = run_sql(sql["class_distribution"])
-    return out
+                "reason": f"Sector data temporarily unavailable ({type(exc).__name__})."}
 
 
 # ── Applicant-name search (the other half of "find my company") ──────
